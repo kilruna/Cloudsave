@@ -68,7 +68,7 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
             let window = window.clone();
             let config = config.clone();
             let folders_group = folders_group.clone();
-            dialog.select_folder(Some(&window), None::<&gtk::Cancellable>, move |res| {
+            dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
                 if let Ok(file) = res {
                     if let Some(path) = file.path() {
                         if !config.borrow().folders.contains(&path) {

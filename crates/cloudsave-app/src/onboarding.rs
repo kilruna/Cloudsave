@@ -161,7 +161,7 @@ fn folders_page(window: &adw::ApplicationWindow, nav: &adw::NavigationView) -> a
             let group = group.clone();
             let checks = checks.clone();
             let next = next.clone();
-            dialog.select_folder(Some(&window), None::<&gtk::Cancellable>, move |res| {
+            dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
                 if let Ok(file) = res {
                     if let Some(path) = file.path() {
                         let label = path.to_string_lossy().to_string();
@@ -249,7 +249,7 @@ fn target_page(
             let target = target.clone();
             let next = next.clone();
             let row_local = row_local.clone();
-            dialog.select_folder(Some(&window), None::<&gtk::Cancellable>, move |res| {
+            dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
                 if let Ok(file) = res {
                     if let Some(path) = file.path() {
                         let subtitle = path.to_string_lossy().to_string();
