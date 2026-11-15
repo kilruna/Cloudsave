@@ -2,6 +2,8 @@ app-id: org.cloudsave.Cloudsave
 runtime: org.gnome.Platform
 runtime-version: "48"
 sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
 branch: stable
 command: cloudsave
 
