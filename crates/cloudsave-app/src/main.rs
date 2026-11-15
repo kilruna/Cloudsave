@@ -1,5 +1,6 @@
 use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use libadwaita as adw;
 
 const CSS: &str = r#"
