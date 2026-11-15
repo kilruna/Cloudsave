@@ -11,5 +11,5 @@ path = "src/main.rs"
 
 [dependencies]
 cloudsave-core = { path = "../cloudsave-core" }
-gtk4 = "0.10"
-libadwaita = "0.8"
+gtk4 = { version = "0.10", features = ["v4_18"] }
+libadwaita = { version = "0.8", features = ["v1_7"] }

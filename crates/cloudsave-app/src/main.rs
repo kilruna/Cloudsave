@@ -1,3 +1,4 @@
+use adw::prelude::*;
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
@@ -53,7 +54,7 @@ fn main() -> glib::ExitCode {
 
 fn build_ui(app: &adw::Application) {
     let window = adw::ApplicationWindow::new(app);
-    window.set_title("Cloudsave");
+    window.set_title(Some("Cloudsave"));
     window.set_default_size(880, 700);
 
     let toolbar = adw::ToolbarView::new();
