@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Cloudsave
+Comment=Ordner automatisch in der Cloud sichern
+Exec=cloudsave
+Icon=org.cloudsave.Cloudsave
+Terminal=false
+Type=Application
+Categories=Utility;
+StartupNotify=true

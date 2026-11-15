@@ -4,21 +4,25 @@
 
 ## Hetzner Storage Box – Eckdaten
 
-| Zugang | Protokoll | Port |
-|---|---|---|
-| SSH / SFTP | `sftp -P 23 uXXXXX@uXXXXX.your-storagebox.de` | 23 |
-| rsync | `rsync -e "ssh -p 23" ...` | 23 |
-| BorgBackup | `borg` über SSH | 23 |
-| WebDAV | `https://uXXXXX.your-storagebox.de` | 443 |
-| FTP / FTPS | legacy | 21 |
-| Samba/CIFS | LAN | 445/139 |
+| Zugang | Protokoll | Port | Hinweis |
+|---|---|---|---|
+| SFTP / SCP | `sftp -P 22 uXXXXX@uXXXXX.your-storagebox.de` | **22** immer aktiv; zusätzlich **23** nach Aktivierung von „SSH-Support" (deutlich schneller als Port 22) | Port 22 kann nicht deaktiviert werden; SSH-Key-Login möglich |
+| FTP / FTPS | legacy | 21 | immer aktiv |
+| rsync | `rsync -e "ssh -p 23" ...` | **23** | erfordert „SSH-Support" (Hetzner Console → Einstellungen ändern) |
+| BorgBackup | `borg` über SSH | 23 | ebenfalls „SSH-Support" |
+| WebDAV (HTTPS) | `https://uXXXXX.your-storagebox.de` | 443 | in der Hetzner Console aktivieren |
+| Samba/CIFS | LAN | 445/139 | in der Hetzner Console aktivieren |
+
+Weitere Eckdaten: max. **10 gleichzeitige Verbindungen** pro Account (Upload-Parallelität in Cloudsave daher default 3), SSH-Key-Authentifizierung ohne Passwort für SCP/SFTP/rsync/Borg, Sub-Accounts (`uXXXXX-subN`) sehen nur ihr eigenes Unterverzeichnis, **kein S3** auf der Storage Box (S3-kompatibel ist Hetzner Object Storage, ein separates Produkt). Serverseitige Snapshots der Box selbst sind als zusätzliche Sicherungsebene möglich.
+
+Quellen: [Hetzner Docs – Storage Box (de)](https://docs.hetzner.com/de/storage/storage-box/), [Hetzner Docs – Storage Box Übersicht](https://docs.hetzner.com/de/storage/storage-box/general/)
 
 ## Protokoll-Liste
 
 | # | Protokoll | Hetzner Storage Box | Sinnvoller Einsatzzweck | Stärken | Schwächen | Priorität |
 |---|---|---|---|---|---|---|
 | 1 | **rsync über SSH** | ja (Port 23) | Primäres MVP-Ziel | Bewährtes Delta-Verfahren (nur Änderungen übertragen), Resume bei Abbruch, geringer Eigenentwicklungsaufwand | Benötigt `ssh` + `rsync` im Bundle; Credentials-Handling im Sandbox | **P1** |
-| 2 | **SFTP** (reiner Rust-Client) | ja (Port 23) | Universeller verschlüsselter Transport | Sicher, überall verfügbar, GUI-Clients kompatibel | Ohne rsync kein natives Delta – eigene Diff-Logik nötig | **P1** als Transport, P2 als reiner Upload |
+| 2 | **SFTP** (reiner Rust-Client) | ja (Port 22 und 23) | Universeller verschlüsselter Transport | Sicher, überall verfügbar, GUI-Clients kompatibel | Ohne rsync kein natives Delta – eigene Diff-Logik nötig | **P1** als Transport, P2 als reiner Upload |
 | 3 | **Lokaler Ordner / externes Laufwerk** | – | USB-Platte, gemountetes NAS, Test-Ziel | Trivial, offline, ideal für Tests und Entwicklung | Kein Remote-Backup | **P1** (zweites MVP-Ziel) |
 | 4 | **WebDAV (HTTPS)** | ja (Port 443) | Nextcloud, ownCloud, Storage Box, andere Anbieter | HTTP-basiert, gut für Restore/Datei-Ansicht, breit unterstützt | Kein natives Delta, Sync über Datei-Vergleich | **P2** |
 | 5 | **S3-kompatibel** | nein (Hetzner Object Storage separat) | Hetzner Object Storage, MinIO, AWS S3 | Versioning, Multipart-Uploads, skalierbar, gute SDKs | Kein klassisches „Ordner"-Gefühl, ggf. Kosten pro Request | **P2** |

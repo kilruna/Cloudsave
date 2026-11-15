@@ -1,0 +1,13 @@
+[package]
+name = "cloudsave-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Kommandozeile für Cloudsave"
+
+[[bin]]
+name = "cloudsave-cli"
+path = "src/main.rs"
+
+[dependencies]
+cloudsave-core = { path = "../cloudsave-core" }

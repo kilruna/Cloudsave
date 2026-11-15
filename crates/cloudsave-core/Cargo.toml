@@ -1,0 +1,16 @@
+[package]
+name = "cloudsave-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Sync-Engine-Kern von Cloudsave"
+
+[dependencies]
+blake3 = "1"
+rusqlite = { version = "0.43", default-features = false, features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"

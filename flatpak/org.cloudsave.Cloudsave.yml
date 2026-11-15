@@ -1,0 +1,39 @@
+app-id: org.cloudsave.Cloudsave
+runtime: org.gnome.Platform
+runtime-version: "50"
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+branch: stable
+command: cloudsave
+
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --socket=session-bus
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.portal.Desktop
+  - --filesystem=xdg-config/autostart:ro
+
+modules:
+  - name: cloudsave
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/cloudsave/cargo
+        CARGO_NET_OFFLINE: "true"
+        PATH: /usr/lib/sdk/rust-stable/bin:/app/bin:/usr/bin
+    build-commands:
+      - cargo build --release --locked --offline
+      - install -Dm755 target/release/cloudsave /app/bin/cloudsave
+      - install -Dm644 data/org.cloudsave.Cloudsave.desktop /app/share/applications/org.cloudsave.Cloudsave.desktop
+      - install -Dm644 data/org.cloudsave.Cloudsave.svg /app/share/icons/hicolor/scalable/apps/org.cloudsave.Cloudsave.svg
+      - install -Dm644 data/org.cloudsave.Cloudsave.metainfo.xml /app/share/metainfo/org.cloudsave.Cloudsave.metainfo.xml
+    sources:
+      - type: dir
+        path: ..
+      - cargo-sources.json
