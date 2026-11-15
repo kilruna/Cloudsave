@@ -229,6 +229,7 @@ Damit werden Action-Versionen (Major-Tags) und Cargo-Crates wöchentlich als PR 
 
 `Makefile` im Repo-Root, damit lokal exakt dieselben Befehle laufen wie in CI:
 
+<!-- markdownlint-disable MD010 -->
 ```make
 .PHONY: ci flatpak-build
 
@@ -241,6 +242,7 @@ ci:
 flatpak-build:
 	flatpak-builder --user --force-clean _build flatpak/org.cloudsave.Cloudsave.yml
 ```
+<!-- markdownlint-enable MD010 -->
 
 ## 10. Repo-Einstellungen (nicht Teil des Git-Repos)
 
