@@ -65,20 +65,25 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
         let folders_group = folders_group.clone();
         add_row.connect_activated(move |_| {
             let dialog = gtk::FileDialog::new();
-            let window = window.clone();
+            let window_arg = window.clone();
+            let window_cb = window.clone();
             let config = config.clone();
             let folders_group = folders_group.clone();
-            dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
-                if let Ok(file) = res {
-                    if let Some(path) = file.path() {
-                        if !config.borrow().folders.contains(&path) {
-                            config.borrow_mut().folders.push(path.clone());
-                            let _ = config.borrow().save(&Config::default_path());
-                            folders_group.add(&folder_row(&window, &config, &path));
+            dialog.select_folder(
+                Some(&window_arg),
+                None::<&gtk::gio::Cancellable>,
+                move |res| {
+                    if let Ok(file) = res {
+                        if let Some(path) = file.path() {
+                            if !config.borrow().folders.contains(&path) {
+                                config.borrow_mut().folders.push(path.clone());
+                                let _ = config.borrow().save(&Config::default_path());
+                                folders_group.add(&folder_row(&window_cb, &config, &path));
+                            }
                         }
                     }
-                }
-            });
+                },
+            );
         });
     }
     folders_group.add(&add_row);
@@ -157,7 +162,7 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
     {
         let config = config.clone();
         let banner = banner.clone();
-        let sync_btn = sync_btn.clone();
+        let btn_cb = sync_btn.clone();
         let files_val = files_val.clone();
         let bytes_val = bytes_val.clone();
         let last_val = last_val.clone();
@@ -166,7 +171,7 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
             trigger_sync(
                 &config,
                 &banner,
-                &sync_btn,
+                &btn_cb,
                 &files_val,
                 &bytes_val,
                 &last_val,
