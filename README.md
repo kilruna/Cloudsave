@@ -34,4 +34,4 @@ Hetzner Storage Box (rsync/SFTP über SSH, WebDAV), WebDAV/Nextcloud, S3-kompati
 
 ## Status
 
-Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md). CI-Grundgerüst (Phase 0–2, siehe [docs/ci.md](docs/ci.md)) ist eingerichtet und grün; das M0-Skelett (Workspace `crates/cloudsave-core` + `crates/cloudsave-app`) baut in CI ein Flatpak-Bundle (`flatpak/org.cloudsave.Cloudsave.yml`, GNOME 48).
+Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md). CI-Grundgerüst (Phase 0–2, siehe [docs/ci.md](docs/ci.md)) ist eingerichtet und grün; das M0-Skelett (Workspace `crates/cloudsave-core` + `crates/cloudsave-app`) baut in CI ein Flatpak-Bundle (`flatpak/org.cloudsave.Cloudsave.yml`, GNOME 50).

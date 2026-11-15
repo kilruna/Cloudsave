@@ -110,7 +110,7 @@ Hinweise:
 
 ## 6. Phase 2 – Flatpak-Build-CI (umgesetzt)
 
-`.github/workflows/flatpak.yml` – baut das Flatpak in einem fertigen Flatpak-Container und lädt das Bundle als Artifact hoch (zum manuellen Testen aus dem PR). Manifest: `flatpak/org.cloudsave.Cloudsave.yml` (GNOME 48), App-Skelett: `crates/cloudsave-app` (Binary `cloudsave`), Data-Dateien unter `data/`:
+`.github/workflows/flatpak.yml` – baut das Flatpak in einem fertigen Flatpak-Container und lädt das Bundle als Artifact hoch (zum manuellen Testen aus dem PR). Manifest: `flatpak/org.cloudsave.Cloudsave.yml` (GNOME 50), App-Skelett: `crates/cloudsave-app` (Binary `cloudsave`), Data-Dateien unter `data/`:
 
 ```yaml
 name: Flatpak
@@ -136,7 +136,7 @@ jobs:
     name: flatpak-builder
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
       - uses: actions/checkout@v7
@@ -158,7 +158,7 @@ jobs:
 
 Hinweise:
 
-- Container-Image und GNOME-Version an das Manifest anpassen (z. B. `gnome-48`); [flathub-infra/actions-images](https://github.com/flathub-infra/actions-images) listet verfügbare Tags.
+- Container-Image und GNOME-Version an das Manifest anpassen (z. B. `gnome-50`); [flathub-infra/actions-images](https://github.com/flathub-infra/actions-images) listet verfügbare Tags.
 - `flatpak/cargo-sources.json` (Output von `flatpak-cargo-generator`) wird committhet; der Schritt „Vendored Cargo-Sources aktuell“ stellt sicher, dass er bei `Cargo.lock`-Änderungen neu erzeugt wurde.
 - Actions: [flatpak/flatpak-github-actions](https://github.com/flatpak/flatpak-github-actions) (`flatpak-builder@v6`).
 
@@ -187,7 +187,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: release
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
     steps:
       - uses: actions/checkout@v7

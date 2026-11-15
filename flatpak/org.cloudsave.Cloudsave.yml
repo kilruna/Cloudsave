@@ -1,6 +1,6 @@
 app-id: org.cloudsave.Cloudsave
 runtime: org.gnome.Platform
-runtime-version: "48"
+runtime-version: "50"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -19,6 +19,9 @@ finish-args:
 modules:
   - name: cloudsave
     buildsystem: simple
+    build-options:
+      env:
+        PATH: /usr/lib/sdk/rust-stable/bin:/app/bin:/usr/bin
     build-commands:
       - cargo build --release --locked
       - install -Dm755 target/release/cloudsave /app/bin/cloudsave
