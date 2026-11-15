@@ -54,7 +54,7 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
         .title("Gesicherte Ordner")
         .build();
     for folder in config.borrow().folders.clone() {
-        folders_group.add(&folder_row(window, &config, &folder));
+        folders_group.add(&folder_row(&config, &folder));
     }
     let add_row = adw::ActionRow::builder()
         .title("Anderer Ordner hinzufügen …")
@@ -78,7 +78,7 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
                             if !config.borrow().folders.contains(&path) {
                                 config.borrow_mut().folders.push(path.clone());
                                 let _ = config.borrow().save(&Config::default_path());
-                                folders_group.add(&folder_row(&window_cb, &config, &path));
+                                folders_group.add(&folder_row(&config, &path));
                             }
                         }
                     }
@@ -201,12 +201,8 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
     toolbar.upcast()
 }
 
-fn folder_row(
-    window: &adw::ApplicationWindow,
-    config: &Rc<RefCell<Config>>,
-    path: &PathBuf,
-) -> adw::ActionRow {
-    let _ = window;
+fn folder_row(config: &Rc<RefCell<Config>>, path: &Path) -> adw::ActionRow {
+    let path = path.to_path_buf();
     let subtitle = path.to_string_lossy().to_string();
     let row = adw::ActionRow::builder().title(&subtitle).build();
     let check = gtk::CheckButton::new();
