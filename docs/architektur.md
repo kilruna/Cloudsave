@@ -89,3 +89,7 @@ Wichtige Crates: `gtk4`, `libadwaita`, `ashpd` (Portale), `zbus` (D-Bus), `notif
 - **Integrationstests:** lokales Ziel (schnell), WebDAV-Testserver und SFTP via Docker in CI.
 - **CI (GitHub Actions):** `cargo fmt --check`, `cargo clippy`, `cargo test`, danach Flatpak-Build mit `flatpak-builder` + Smoke-Test (`cloudsave --version`, Daemon startet über D-Bus).
 - **Manuelle QA:** Checkliste Einrichtung → Änderung → Sync → Restore auf frischer VM/Container.
+
+## Umgesetzt (M1-Teil: Sync-Engine + lokales Ziel)
+
+`cloudsave-core` enthält die lauffähige Engine: `Config` (TOML unter `~/.config/cloudsave/config.toml`), `State` (SQLite, `~/.local/state/cloudsave/state.db`: path/size/mtime/hash/synced_at), `Backend`-Trait mit `LocalBackend` (spiegelt `<Ziel>/<Ordnername>/<relativer Pfad>`) und `engine::sync()` (Scan via walkdir → Diff gegen State über size+mtime → Upload mit BLAKE3-Hash im Stream → Löschen von lokal entfernten Dateien; Report mit uploaded/deleted/skipped/bytes/errors). Erster manueller Sync über `cloudsave-cli sync [CONFIG]` (`make sync`). Integrationstests in `crates/cloudsave-core/tests/sync.rs` (Roundtrip, Delta, Delete, fehlender Ordner).
