@@ -33,6 +33,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - name: GTK4/libadwaita-Dev-Pakete (für gtk4-sys)
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-4-dev libadwaita-1-dev
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: ci
@@ -44,6 +46,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - name: GTK4/libadwaita-Dev-Pakete (für gtk4-sys)
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-4-dev libadwaita-1-dev
       - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:

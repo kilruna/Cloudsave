@@ -49,3 +49,15 @@ Eine Seite, drei Bereiche – keine Menü-Tiefe:
 ## Zustände, die angezeigt werden müssen
 
 - Leerlauf/alles synchronisiert · Sync läuft (mit Fortschritt) · Pausiert (Akku/getaktet/manuell) · Fehler (mit Klartext + Aktion) · Ersteinrichtung läuft (erster Vollsync).
+
+## Umgesetztes Design der Hauptansicht (M1-Skelett)
+
+Die Hauptansicht ist als **dunkles Dashboard** im Stil der Referenz gestaltet (dunkler Hintergrund, Karten, orange Akzent) und trotzdem auf einen Blick erfassbar – eine Seite, keine Menüebenen:
+
+- **Farben (CSS-Overrides in `crates/cloudsave-app/src/main.rs`):** Hintergrund `#121212`, Karten `#1E1E1E` (16 px Ecken), Akzent Orange `#FF7A29` (über `accent_bg_color` – färbt den primären Button „Jetzt synchronisieren“ in der Headerbar orange), Farbschema per `ColorScheme::ForceDark` erzwungen.
+- **Headerbar:** Titel „Cloudsave“ + rechts der orange **pill**-Button „Jetzt synchronisieren“.
+- **Status-Banner oben:** `AdwBanner` („Alles synchronisiert · letzter Sync vor …“).
+- **Stat-Karten (3er-Raster):** große Zahl + kleines Label – „Dateien gesichert“, „auf dem Ziel belegt“, „letzter Sync“ (eigene CSS-Klasse `.stat-card`).
+- **Gruppen als Karten** (`AdwPreferencesGroup`): „Gesicherte Ordner“ (Zeilen mit Checkbox rechts, plus Zeile „Anderer Ordner hinzufügen …“), „Ziel“ (Hetzner Storage Box + Button „Verbindung testen“ + Schalter „Automatisch synchronisieren“), „Einstellungen“ (Sync-Rhythmus als `AdwComboRow`, Schalter für Fehler-Benachrichtigung und Akku-Pause).
+
+Der Ersteinrichtungs-Flow (Welcome → Ordner → Ziel → fertig) wird als Nächstes auf derselben Basis umgesetzt.
