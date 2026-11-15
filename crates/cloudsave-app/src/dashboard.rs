@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -66,7 +66,6 @@ pub fn build(window: &adw::ApplicationWindow, config: &Config, autostart: bool) 
         add_row.connect_activated(move |_| {
             let dialog = gtk::FileDialog::new();
             let window_arg = window.clone();
-            let window_cb = window.clone();
             let config = config.clone();
             let folders_group = folders_group.clone();
             dialog.select_folder(
