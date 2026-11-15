@@ -22,7 +22,7 @@ Plan für eine saubere, schrittweise aufgebaute CI (GitHub Actions). Jede Phase 
 | Workflow | Trigger | Jobs | Phase |
 |---|---|---|---|
 | `markdownlint.yml` | push/PR (nur `*.md`, Config, Workflow) | Markdown-Lint | 0 – bereits umgesetzt |
-| `rust.yml` | push/PR (nur `crates/**`, `Cargo.*`, `rust-toolchain.toml`) | fmt, clippy, test, deny | 1 – mit M0 |
+| `rust.yml` | push/PR (nur `crates/**`, `Cargo.*`, `rust-toolchain.toml`) | fmt, clippy, test, deny | 1 – umgesetzt |
 | `flatpak.yml` | push/PR (nur `flatpak/**`, `crates/**`, `Cargo.lock`) | Flatpak-Build + Artifact | 2 – mit M1/M2 |
 | `release.yml` | Tag `v*` | Bundle bauen, SHA256, GitHub Release | 3 – mit M3 |
 | Dependabot | wöchentlich | PRs für Actions + Cargo-Crates | 1 – mit M0 |
@@ -31,9 +31,9 @@ Plan für eine saubere, schrittweise aufgebaute CI (GitHub Actions). Jede Phase 
 
 `markdownlint.yml` + `.markdownlint.json` sind bereits eingerichtet und grün (PR-Check „Markdown-Lint"). Regeln MD013/MD040/MD060 sind deaktiviert (lange Tabellenzeilen, ASCII-Diagramme, kompakter Tabellenstil). Neue Doku-Dateien werden automatisch mitgelintet.
 
-## 5. Phase 1 – Rust-CI (kommt mit M0, erstem Code)
+## 5. Phase 1 – Rust-CI (umgesetzt, zusammen mit dem M0-Skelett)
 
-Zusätzlich anzulegen: `rust-toolchain.toml` (pinned Channel, z. B. `channel = "stable"`) und `deny.toml` für `cargo-deny` (Lizenz-Allowlist, keine Advisories).
+Bereits angelegt: `rust-toolchain.toml` (Channel `stable`), `deny.toml` für `cargo-deny` (Lizenz-Allowlist, yanked = deny), minimales Workspace-Skelett (`crates/cloudsave-core`), Makefile und Dependabot.
 
 Gerüst für `.github/workflows/rust.yml`:
 

@@ -30,7 +30,8 @@ Hetzner Storage Box (rsync/SFTP über SSH, WebDAV), WebDAV/Nextcloud, S3-kompati
 - [docs/protocols.md](docs/protocols.md) – Protokoll-Liste mit Priorisierung (Hetzner Storage Box im Fokus)
 - [docs/architektur.md](docs/architektur.md) – Komponenten, Sync-Ablauf, Flatpak-Packaging, Sicherheit, Tests/CI
 - [docs/ux-flow.md](docs/ux-flow.md) – flacher Einrichtungs-Flow und Hauptansicht
+- [docs/ci.md](docs/ci.md) – CI-Plan und -Umsetzung (Doku-Lint + Rust-CI laufen bereits grün)
 
 ## Status
 
-Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md).
+Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md). CI-Grundgerüst (Phase 0 + 1, siehe [docs/ci.md](docs/ci.md)) und das M0-Skelett (Cargo-Workspace `crates/cloudsave-core`) sind eingerichtet.

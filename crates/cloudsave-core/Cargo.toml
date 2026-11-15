@@ -1,0 +1,5 @@
+[package]
+name = "cloudsave-core"
+version = "0.1.0"
+edition = "2021"
+description = "Sync-Engine-Kern von Cloudsave"
