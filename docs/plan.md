@@ -52,6 +52,8 @@ Bidirektionale Synchronisation, Versionierung im Remote, Freigaben/Sharing, Mobi
 
 ## 3. Architektur (Rust-Workspace)
 
+Details zu Komponenten, Sync-Ablauf, Flatpak-Packaging, Sicherheit und CI in [architektur.md](architektur.md).
+
 ```
 cloudsave/ (Cargo-Workspace)
 ├── cloudsave-core/     # UI-unabhängige Sync-Engine (testbar)
@@ -76,6 +78,8 @@ cloudsave/ (Cargo-Workspace)
 - **Protokoll-Abstraktion:** Alle Ziele implementieren denselben `Backend`-Trait – neue Protokolle sind reine Core-Erweiterungen, UI merkt nichts davon.
 
 ## 4. UX-Flow (Ersteinrichtung)
+
+Ausführlicher Flow (Schritte, Hauptansicht, Zustände, Gestaltungsregeln) in [ux-flow.md](ux-flow.md).
 
 1. **Willkommen:** „Welche Ordner möchtest du sichern?" → Datei-Auswahl (Dokumenten-Portal, Mehrfachauswahl per Häkchen, persistenter Zugriff wird vom Portal gespeichert).
 2. **Ziel wählen:** Kacheln – Hetzner Storage Box (voreingestellt, Host `uXXXXX.your-storagebox.de`, Port 23), WebDAV, S3, lokaler Ordner → Zugangsdaten (im Secret Service gespeichert).

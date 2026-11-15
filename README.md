@@ -24,6 +24,13 @@ Hetzner Storage Box (rsync/SFTP über SSH, WebDAV), WebDAV/Nextcloud, S3-kompati
 - **Flatpak** (GNOME-SDK); Ordner-Zugriff über das Dokumenten-Portal statt pauschalem Home-Zugriff
 - **SQLite** für den Sync-Status, **D-Bus** für die Kommunikation zwischen UI und Daemon
 
+## Dokumentation
+
+- [docs/plan.md](docs/plan.md) – Plan, Feature-Set, Architektur-Überblick, Meilensteine, Risiken
+- [docs/protocols.md](docs/protocols.md) – Protokoll-Liste mit Priorisierung (Hetzner Storage Box im Fokus)
+- [docs/architektur.md](docs/architektur.md) – Komponenten, Sync-Ablauf, Flatpak-Packaging, Sicherheit, Tests/CI
+- [docs/ux-flow.md](docs/ux-flow.md) – flacher Einrichtungs-Flow und Hauptansicht
+
 ## Status
 
 Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md).
