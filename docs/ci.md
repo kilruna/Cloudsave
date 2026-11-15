@@ -159,6 +159,7 @@ jobs:
 Hinweise:
 
 - Container-Image und GNOME-Version an das Manifest anpassen (z. B. `gnome-50`); [flathub-infra/actions-images](https://github.com/flathub-infra/actions-images) listet verfügbare Tags.
+- Der Flatpak-Build läuft bei `push` nur auf dem Default-Branch und sonst pro PR – spart Runner-Minuten und doppelte Läufe (der SDK-Download im Container schlägt gelegentlich mit „Invalid cross-device link“ fehl; dann einfach neu pushen).
 - `flatpak/cargo-sources.json` (Output von `flatpak-cargo-generator`) wird committhet; der Schritt „Vendored Cargo-Sources aktuell“ stellt sicher, dass er bei `Cargo.lock`-Änderungen neu erzeugt wurde.
 - Actions: [flatpak/flatpak-github-actions](https://github.com/flatpak/flatpak-github-actions) (`flatpak-builder@v6`).
 
