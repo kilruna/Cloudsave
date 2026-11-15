@@ -7,7 +7,7 @@ Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du beliebige Ordner a
 ## Highlights
 
 - **Einfache Einrichtung:** Flacher Flow in drei Schritten, keine verschachtelten Menüs – vom Start bis zum eingerichteten Sync.
-- **Mehrere Quellordner:** Beliebig viele Verzeichnisse pro Ziel, bequem über die Datei-Auswahl hinzufügbar.
+- **Mehrere Quellordner:** Beliebig viele Verzeichnisse pro Ziel – per Datei-Auswahl hinzufügen und jederzeit per Häkchen an- bzw. abwählen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
 - **Sichere Zugangsdaten:** Passwörter liegen im Secret Service (libsecret), nie in Klartext-Dateien.

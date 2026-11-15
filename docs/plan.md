@@ -11,11 +11,18 @@ Flatpak-Desktop-App für Linux (Rust), die ausgewählte Ordner automatisch und r
 
 ## 2. Feature-Set (phasenweise)
 
+### Kern-Features (direkt aus der Anforderung)
+
+- **Ordner anhaken:** Beliebige Verzeichnisse aus dem Home-Bereich auswählen (Mehrfachauswahl mit Häkchen); im Hauptfenster ist jeder Ordner einzeln per Häkchen an- bzw. abwählbar.
+- **Beliebiges Ziel:** Hetzner Storage Box (Voreinstellung), WebDAV/Nextcloud, S3-kompatibler Speicher, lokaler Ordner/externes Laufwerk – Details in [protocols.md](protocols.md).
+- **Automatische Änderungserkennung:** Das System meldet Datei-Ereignisse (anlegen, ändern, löschen, verschieben); nach einer kurzen Ruhezeit wird genau das Delta nachgesynct.
+- **Ressourcenschonend:** Ereignisgesteuert statt dauerhaft scannend – zwischen Syncs schläft der Dienst, es gibt kein Sekunden-Polling und optional ein Bandbreiten-Limit.
+
 ### Phase 1 – MVP
 
 | ID | Feature |
 |---|---|
-| F1 | Ersteinrichtung: mehrere Quellordner per Datei-Auswahl (Portal) hinzufügen, inkl. Standardvorschlägen (`~/Dokumente`, `~/Bilder`, `~/Schreibtisch`) |
+| F1 | Ersteinrichtung: mehrere Quellordner per Datei-Auswahl (Portal, Mehrfachauswahl) hinzufügen, inkl. Standardvorschlägen (`~/Dokumente`, `~/Bilder`, `~/Schreibtisch`); Ordnerliste mit Häkchen zum An-/Abwählen |
 | F2 | Ziel-Assistent mit Kacheln: **Hetzner Storage Box** (voreingestellt), lokaler Ordner/externes Laufwerk; Zugangsdaten sicher im Secret Service speichern |
 | F3 | „Jetzt synchronisieren" + Fortschrittsanzeige + Benachrichtigung bei Abschluss/Fehler |
 | F4 | SQLite-Zustands-DB: pro Datei letzter Stand (Pfad, Größe, mtime, Hash), letzter Sync, Fehlerlog |
@@ -65,16 +72,16 @@ cloudsave/ (Cargo-Workspace)
 - **Async-Runtime:** tokio (Timer, Netzwerk, Nebenläufigkeit der Uploads).
 - **IPC UI ↔ Daemon:** D-Bus (zbus) auf dem Session-Bus – Methoden `SyncNow`, `GetStatus`; Signale `Progress`, `Finished`.
 - **Konfiguration:** `~/.config/cloudsave/config.toml`; **Zustand:** `~/.local/state/cloudsave/state.db` (SQLite).
-- **Änderungserkennung:** inotify rekursiv auf jedem Quellordner; Events landen in einer Debounce-Warteschlange; danach **ein** Sync-Lauf. Fallback: Vollscan alle 6 h + beim Start (mtime+size gegen State-DB, Hash nur bei Mehrdeutigkeit). Kein Polling in kurzen Intervallen.
+- **Änderungserkennung:** inotify rekursiv auf jedem Quellordner; Datei-Ereignisse (anlegen/ändern/löschen/verschieben) landen in einer Debounce-Warteschlange; danach **ein** Sync-Lauf. Fallback: Vollscan alle 6 h + beim Start (mtime+size gegen State-DB, Hash nur bei Mehrdeutigkeit). Kein Polling in kurzen Intervallen.
 - **Protokoll-Abstraktion:** Alle Ziele implementieren denselben `Backend`-Trait – neue Protokolle sind reine Core-Erweiterungen, UI merkt nichts davon.
 
 ## 4. UX-Flow (Ersteinrichtung)
 
-1. **Willkommen:** „Welche Ordner möchtest du sichern?" → Datei-Auswahl (Dokumenten-Portal, Mehrfachauswahl, persistenter Zugriff wird vom Portal gespeichert).
+1. **Willkommen:** „Welche Ordner möchtest du sichern?" → Datei-Auswahl (Dokumenten-Portal, Mehrfachauswahl per Häkchen, persistenter Zugriff wird vom Portal gespeichert).
 2. **Ziel wählen:** Kacheln – Hetzner Storage Box (voreingestellt, Host `uXXXXX.your-storagebox.de`, Port 23), WebDAV, S3, lokaler Ordner → Zugangsdaten (im Secret Service gespeichert).
 3. **Zusammenfassung + „Sync einrichten"** → erster Sync startet, Abschluss per Benachrichtigung.
 
-Danach gibt es **ein einziges Hauptfenster**: Status, Ordnerliste, Ziel, letzter Sync, großer „Jetzt synchronisieren"-Button. Alle Einstellungen sind flach erreichbar – keine verschachtelten Menüs.
+Danach gibt es **ein einziges Hauptfenster**: Status, Ordnerliste (jeder Ordner mit Häkchen an-/abwählbar), Ziel, letzter Sync, großer „Jetzt synchronisieren"-Button. Alle Einstellungen sind flach erreichbar – keine verschachtelten Menüs.
 
 ## 5. Flatpak & Sandbox
 
