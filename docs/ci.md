@@ -23,7 +23,7 @@ Plan für eine saubere, schrittweise aufgebaute CI (GitHub Actions). Jede Phase 
 |---|---|---|---|
 | `markdownlint.yml` | push/PR (nur `*.md`, Config, Workflow) | Markdown-Lint | 0 – bereits umgesetzt |
 | `rust.yml` | push/PR (nur `crates/**`, `Cargo.*`, `rust-toolchain.toml`) | fmt, clippy, test, deny | 1 – umgesetzt |
-| `flatpak.yml` | push/PR (nur `flatpak/**`, `crates/**`, `Cargo.lock`) | Flatpak-Build + Artifact | 2 – mit M1/M2 |
+| `flatpak.yml` | push/PR (nur `flatpak/**`, `crates/**`, `data/**`, `Cargo.*`) | Flatpak-Build + Artifact | 2 – umgesetzt |
 | `release.yml` | Tag `v*` | Bundle bauen, SHA256, GitHub Release | 3 – mit M3 |
 | Dependabot | wöchentlich | PRs für Actions + Cargo-Crates | 1 – mit M0 |
 
@@ -108,9 +108,9 @@ Hinweise:
 - Tests über `cargo nextest` (schneller, bessere Ausgabe); Plain-`cargo test` ist als Fallback ebenso ok.
 - `deny` prüft Lizenzen und Security-Advisories der Abhängigkeiten (`deny.toml` im Repo).
 
-## 6. Phase 2 – Flatpak-Build-CI
+## 6. Phase 2 – Flatpak-Build-CI (umgesetzt)
 
-`.github/workflows/flatpak.yml` – baut das Flatpak in einem fertigen Flatpak-Container und lädt das Bundle als Artifact hoch (zum manuellen Testen aus dem PR):
+`.github/workflows/flatpak.yml` – baut das Flatpak in einem fertigen Flatpak-Container und lädt das Bundle als Artifact hoch (zum manuellen Testen aus dem PR). Manifest: `flatpak/org.cloudsave.Cloudsave.yml` (GNOME 48), App-Skelett: `crates/cloudsave-app` (Binary `cloudsave`), Data-Dateien unter `data/`:
 
 ```yaml
 name: Flatpak

@@ -1,0 +1,44 @@
+name: Flatpak
+
+on:
+  push:
+  pull_request:
+    paths:
+      - 'flatpak/**'
+      - 'crates/**'
+      - 'data/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/flatpak.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: flatpak-builder
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-48
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v7
+      - name: Vendored Cargo-Sources aktuell
+        run: |
+          python3 -m pip install --quiet flatpak-cargo-generator
+          flatpak-cargo-generator Cargo.lock -o /tmp/cargo-sources.json
+          python3 -c "import json,sys; a=json.load(open('flatpak/cargo-sources.json')); b=json.load(open('/tmp/cargo-sources.json')); sys.exit(0 if a == b else 1)"
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: flatpak/org.cloudsave.Cloudsave.yml
+          bundle: cloudsave.flatpak
+          cache-key: flatpak-builder-${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudsave.flatpak
+          path: cloudsave.flatpak
+          retention-days: 14

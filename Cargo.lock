@@ -3,5 +3,12 @@
 version = 4
 
 [[package]]
+name = "cloudsave-app"
+version = "0.1.0"
+dependencies = [
+ "cloudsave-core",
+]
+
+[[package]]
 name = "cloudsave-core"
 version = "0.1.0"

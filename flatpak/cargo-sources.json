@@ -1,0 +1,8 @@
+[
+    {
+        "type": "inline",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n",
+        "dest": "cargo",
+        "dest-filename": "config"
+    }
+]
