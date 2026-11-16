@@ -37,7 +37,7 @@ def record(case, title, ok, observed, expected, evidence=None):
     print(f"{row['status']:4} {case} {title}: {observed}", flush=True)
 
 class UI:
-    def __init__(self, name, folders=None, targets=None, **settings):
+    def __init__(self, name, folders=None, targets=None, home_dirs=(), home_files=(), **settings):
         self.name = name
         scratch = os.environ.get('TMPDIR')
         if not scratch: raise RuntimeError('Set TMPDIR to a task-owned scratch directory, not system /tmp')
@@ -45,6 +45,10 @@ class UI:
         os.chmod(self.root, 0o700)
         for d in ('config','state','data','cache','home','control'):
             (self.root/d).mkdir()
+        for directory in home_dirs:
+            (self.root/'home'/directory).mkdir(parents=True, exist_ok=True)
+        for filename in home_files:
+            (self.root/'home'/filename).write_text('synthetic fixture')
         self.cfg = self.root/'config/cloudsave/config.toml'
         self.settings = dict(auto_sync=False, autostart=False, run_in_background=False,
                              sync_interval_minutes=1)
@@ -74,6 +78,7 @@ class UI:
         root = str(self.root)
         args = ['flatpak','run','--no-documents-portal','--nosocket=session-bus',
                 '--no-session-bus','--nosocket=wayland','--socket=x11','--unshare=network',
+                '--nofilesystem=home',
                 '--nofilesystem=xdg-config/autostart',f'--filesystem={root}',
                 f'--filesystem={HERE}:ro','--command=env',APP,
                 f'XDG_CONFIG_HOME={root}/config',f'XDG_STATE_HOME={root}/state',
@@ -223,7 +228,7 @@ class UI:
 
 
 def onboarding():
-    with UI('onboarding') as ui:
+    with UI('onboarding', home_dirs=('Documents', 'Pictures', 'Projekte/nested', '.hidden'), home_files=('notes.txt',)) as ui:
         record('UI-01','Welcome screen', 'Einrichtung starten' in ui.labels(),
                'Welcome and setup button rendered', 'Welcome screen offers setup',ui.snapshot('welcome'))
         close_buttons=[n for n in ui.tree() if n['type']=='GtkButton' and n['mapped'] and any(c['type']=='GtkImage' for c in ui.descendants(n))]
@@ -235,11 +240,13 @@ def onboarding():
                'At most one mapped nonempty control set',ui.snapshot('duplicate-controls'))
         ui.click('Einrichtung starten')
         checks=[n for n in ui.tree() if n['type']=='GtkCheckButton' and n['mapped']]
-        record('UI-03','Default source selection',sum(n['active']==1 for n in checks)==2,
-               f'{sum(n["active"]==1 for n in checks)} selected of {len(checks)} sources','Two default sources selected')
-        for _ in range(2):
-            checks=[n for n in ui.tree() if n['type']=='GtkCheckButton' and n['mapped'] and n['active']]
-            ui.command('active',checks[0]['id'],0)
+        labels=ui.labels()
+        offered=[label for label in labels if label in ('Documents','Pictures','Projekte')]
+        record('UI-03','Discover existing home folders without dummy suggestions',len(checks)==3 and
+               offered==['Documents','Pictures','Projekte'] and not any(n['active'] for n in checks) and
+               not any(label in labels for label in ('Dokumente','Bilder','Musik','Videos','Schreibtisch','.hidden','notes.txt','nested')),
+               f'Offered folders={offered}; selected={sum(n["active"]==1 for n in checks)}',
+               'Only real visible direct subfolders are offered alphabetically, initially unselected',ui.snapshot('home-folders'))
         record('UI-04','Empty selection blocks Next',not ui.find('GtkButton','Weiter')['sensitive'],
                f'Next sensitive={ui.find("GtkButton","Weiter")["sensitive"]}','Next disabled without sources')
         ui.set_active('GtkCheckButton',True)
@@ -398,6 +405,7 @@ def native_picker():
         extra=ui.root/'backup-extra';extra.mkdir()
         controls=[len(window_controls(ui))]
         ui.click('Einrichtung starten');controls.append(len(window_controls(ui)))
+        ui.set_active('GtkCheckButton',True,'Dokumente')
         ui.click('Weiter');controls.append(len(window_controls(ui)))
         ui.click('Ordner auswählen …');ui.click('_Cancel')
         states=[not ui.find('GtkButton','Weiter')['sensitive'],bool(ui.find('GtkButton','Ordner auswählen …')['sensitive'])]
@@ -437,6 +445,22 @@ def native_picker():
                'Invalid endpoint blocked; explicit local selection adds a working second target',ui.snapshot('added-target'))
 
 
+def empty_or_missing_home():
+    for missing in (False, True):
+        with UI('missing-home' if missing else 'empty-home') as ui:
+            if missing:
+                (ui.root/'home').rename(ui.root/'home-unavailable')
+            ui.click('Einrichtung starten')
+            labels=ui.labels()
+            reason='Home-Verzeichnis konnte nicht gelesen werden' if missing else 'Keine sichtbaren Ordner'
+            record('UI-23' if missing else 'UI-22','Missing home error' if missing else 'Empty home has no dummy folders',
+                   not any(n['type']=='GtkCheckButton' and n['mapped'] for n in ui.tree()) and
+                   not ui.find('GtkButton','Weiter')['sensitive'] and any(reason in label for label in labels) and
+                   'Anderer Ordner hinzufügen …' in labels,
+                   ' | '.join(label for label in labels if reason in label),
+                   'Explain empty/unavailable home, keep manual folder picker, and require a selected source',ui.snapshot('home-state'))
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -461,6 +485,7 @@ def main():
     (OUT/'environment.json').write_text(json.dumps(metadata,indent=2,ensure_ascii=False))
     try:
         for test in (onboarding,dashboard,missing_source,empty_targets):test()
+        empty_or_missing_home()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2

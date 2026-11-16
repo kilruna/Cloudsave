@@ -109,6 +109,16 @@ fn add_folder_row(
     label: &str,
     active: bool,
 ) {
+    let existing = checks
+        .borrow()
+        .iter()
+        .find(|(existing, _)| existing == &path)
+        .map(|(_, check)| check.clone());
+    if let Some(check) = existing {
+        check.set_active(true);
+        next.set_sensitive(true);
+        return;
+    }
     let subtitle = path.to_string_lossy().to_string();
     let row = adw::ActionRow::builder()
         .title(label)
@@ -129,6 +139,28 @@ fn add_folder_row(
     });
 }
 
+fn home_folders() -> std::io::Result<Vec<PathBuf>> {
+    let home = std::env::var_os("HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| std::io::Error::other("Home-Verzeichnis nicht gefunden"))?;
+    let mut folders = Vec::new();
+    // Only inspect the immediate children; never recursively scan their contents here.
+    for entry in std::fs::read_dir(home)? {
+        let entry = entry?;
+        if !entry.file_name().to_string_lossy().starts_with('.') && entry.path().is_dir() {
+            folders.push(entry.path());
+        }
+    }
+    folders.sort_by_cached_key(|path| {
+        path.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+    Ok(folders)
+}
+
 fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::NavigationPage {
     let checks: Rc<RefCell<Vec<(PathBuf, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
     let next = gtk::Button::with_label("Weiter");
@@ -137,18 +169,24 @@ fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
 
     let group = adw::PreferencesGroup::builder()
         .title("Welche Ordner sollen gesichert werden?")
+        .description(
+            "Vorhandene Ordner in deinem Home-Verzeichnis. Wähle aus, was gesichert werden soll.",
+        )
         .build();
 
-    let home = std::env::var("HOME").map(PathBuf::from).unwrap_or_default();
-    for (label, dir, active) in [
-        ("Dokumente", "Dokumente", true),
-        ("Bilder", "Bilder", true),
-        ("Musik", "Musik", false),
-        ("Videos", "Videos", false),
-        ("Schreibtisch", "Schreibtisch", false),
-    ] {
-        let path = home.join(dir);
-        add_folder_row(&group, &checks, &next, path, label, active);
+    match home_folders() {
+        Ok(folders) if folders.is_empty() => group.set_description(Some(
+            "Keine sichtbaren Ordner im Home-Verzeichnis gefunden. Du kannst einen Ordner hinzufügen.",
+        )),
+        Ok(folders) => {
+            for path in folders {
+                let label = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                add_folder_row(&group, &checks, &next, path, &label, false);
+            }
+        }
+        Err(error) => group.set_description(Some(&format!(
+            "Home-Verzeichnis konnte nicht gelesen werden: {error}. Du kannst einen Ordner hinzufügen.",
+        ))),
     }
     next.set_sensitive(checks.borrow().iter().any(|(_, c)| c.is_active()));
 

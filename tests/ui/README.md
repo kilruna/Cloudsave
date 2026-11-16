@@ -6,7 +6,11 @@ The bridge activates real GTK widgets on the main thread. The tests use the real
 sync engine, isolated HOME/XDG profiles, synthetic files, and two local targets.
 No private data or credentials are needed.
 
-The original 18 scenarios are retained. Source deselection and source loss now
+The original scenarios are retained, with UI-03 updated for discovery of real home
+folders: existing English/custom names are offered alphabetically without automatic
+selection; files, hidden folders, nested descendants, and nonexistent standard
+folders are excluded. UI-22/23 cover empty and unavailable home directories.
+Source deselection and source loss now
 include a process restart to verify persisted state. URL validation includes
 empty, whitespace, malformed, HTTP, FTP, and valid HTTPS cases. UI-05 accepts the
 explicit browse control required by the report, instead of requiring a radio
@@ -25,7 +29,7 @@ TMPDIR="$PWD/work/ui-tmp" /usr/bin/python3 tests/ui/run_ui_tests.py \
 
 The suite sets HOME/XDG **inside** the sandbox because Flatpak overrides host
 XDG environment values. It verifies the running process environment before
-performing actions and disables session bus access, network, and autostart writes.
+performing actions and disables real home access, session bus access, network, and autostart writes.
 Do not substitute a real profile or real targets. Each output directory must be new.
 
 ## Native build
@@ -50,6 +54,11 @@ selection, cancellation, reselection, radio switching, window controls on all
 wizard pages, an explicit first sync, and adding a second endpoint. This uses
 widget actions plus `xdotool` to open/submit the chooser's location entry.
 It does not simulate chooser success or replace the filesystem/backend.
+
+The production Flatpak grants read-only access to the user's home so setup can
+enumerate its immediate visible folders. The harness explicitly revokes that
+permission and grants only its synthetic fixture directory instead. No recursive
+home scan or automatic source selection is performed by setup.
 
 Exit status: **0** all checks passed, **1** product failures, **2** harness/setup
 error. Outputs include JSON results, binary SHA-256, widget trees, screenshots,
