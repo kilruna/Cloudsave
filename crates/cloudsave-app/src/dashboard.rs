@@ -157,8 +157,7 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     rhythm_label.add_css_class("row-label");
     rhythm_label.set_halign(gtk::Align::Start);
     rhythm_label.set_hexpand(true);
-    let rhythm_model = gtk::StringList::new(&["Bei jeder Änderung", "Stündlich", "Täglich"]);
-    let rhythm = gtk::DropDown::new(Some(&rhythm_model), None::<&gtk::Expression>);
+    let rhythm = gtk::DropDown::from_strings(&["Bei jeder Änderung", "Stündlich", "Täglich"]);
     rhythm.set_selected(0);
     rhythm.set_valign(gtk::Align::Center);
     rhythm_row.append(&rhythm_label);

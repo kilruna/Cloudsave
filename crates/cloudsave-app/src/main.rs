@@ -283,11 +283,11 @@ fn build_ui(app: &adw::Application) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) => {
-            let page = dashboard::build(&window, &config, false);
+            let page = dashboard::build(window.upcast_ref(), &config, false);
             nav.push(&adw::NavigationPage::new(&page, "Übersicht"));
         }
         Err(_) => {
-            onboarding::build(&window, &nav);
+            onboarding::build(window.upcast_ref(), &nav);
         }
     }
 

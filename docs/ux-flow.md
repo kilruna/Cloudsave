@@ -60,7 +60,6 @@ Die Hauptansicht (`dashboard.rs`) folgt dem aktuellen UI-Mockup (dunkler Blau-Ve
 - **Zwei Spalten (ca. 60/40):** links „Gesicherte Ordner“ als Kartenliste (Checkbox + Ordner-Icon + Ordnername, aus der Config befüllt), „Ordner hinzufügen“-Button (`.add-btn`, FileDialog), aufklappbarer „Einstellungen“-Bereich (Pfeil + `Revealer`: Sync-Rhythmus, Benachrichtigungen, Akku-Pause, Verbindung testen); rechts Ziel-Karte (`.target-card`: Ziel-Name + Pfad/Untertitel, Zeile „Automatisch synchronisieren“ + Schalter, persistiert in die Config).
 - **Farben (CSS in `crates/cloudsave-app/src/main.rs`):** Akzent Lila `#9D7CFF` über `accent_bg_color` (Button, Checkboxen, Schalter), Karten `rgba(255,255,255,0.055)`, `ColorScheme::ForceDark` erzwungen. Icons (Wolke/Ordner) werden per cairo in den Mockup-Farben gezeichnet.
 
-
 ## Umgesetzt (PR #4): Onboarding + Dashboard
 
 Der Flow ist in `crates/cloudsave-app/src/onboarding.rs` als `AdwNavigationView` umgesetzt: Welcome → Ordner wählen (Checkboxen für vorhandene Standardordner, „Anderer Ordner …“ via FileDialog) → Ziel wählen (lokal aktiv; Hetzner Storage Box als „folgt in M2“ deaktiviert) → Fertig (schreibt `~/.config/cloudsave/config.toml` und startet den ersten Sync). Ohne vorhandene Config startet die App im Onboarding, sonst direkt im Dashboard (`dashboard.rs`): „Jetzt synchronisieren“ läuft `cloudsave-core::sync` im Worker-Thread, Status-Titel/-zeile + Fortschrittsbalken aktualisieren sich aus dem SQLite-State, Ordner-Checkboxen persistieren in die Config.
