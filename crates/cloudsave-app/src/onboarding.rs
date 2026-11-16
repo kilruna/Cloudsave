@@ -209,13 +209,12 @@ enum TargetChoice {
     },
 }
 
-fn target_page(
+fn target_picker(
     window: &gtk::Window,
-    nav: &adw::NavigationView,
-    folders: Vec<PathBuf>,
-) -> adw::NavigationPage {
+    button_label: &str,
+) -> (gtk::Box, Rc<RefCell<Option<TargetChoice>>>, gtk::Button) {
     let choice: Rc<RefCell<Option<TargetChoice>>> = Rc::new(RefCell::new(None));
-    let next = gtk::Button::with_label("Weiter");
+    let next = gtk::Button::with_label(button_label);
     next.add_css_class("suggested-action");
     next.add_css_class("pill");
     next.set_sensitive(false);
@@ -400,6 +399,15 @@ fn target_page(
     content.append(&group);
     content.append(&form);
 
+    (content, choice, next)
+}
+
+fn target_page(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    folders: Vec<PathBuf>,
+) -> adw::NavigationPage {
+    let (content, choice, next) = target_picker(window, "Weiter");
     {
         let nav = nav.clone();
         let window = window.clone();
@@ -410,8 +418,50 @@ fn target_page(
             }
         });
     }
-
     shell("Ziel wählen", &content, Some(next))
+}
+
+pub fn add_target_page(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    config: Rc<RefCell<Config>>,
+) -> adw::NavigationPage {
+    let (content, choice, add) = target_picker(window, "Hinzufügen");
+    {
+        let nav = nav.clone();
+        let window = window.clone();
+        let choice = choice.clone();
+        let config = config.clone();
+        add.connect_clicked(move |_| {
+            if let Some(choice) = choice.borrow().clone() {
+                let target = match &choice {
+                    TargetChoice::Local(path) => Target::Local { path: path.clone() },
+                    TargetChoice::Webdav {
+                        url,
+                        user,
+                        password,
+                    } => {
+                        let _ = cloudsave_core::save_password(url, user, password);
+                        Target::Webdav {
+                            url: url.clone(),
+                            user: user.clone(),
+                        }
+                    }
+                };
+                {
+                    let mut cfg = config.borrow_mut();
+                    if !cfg.targets.contains(&target) {
+                        cfg.targets.push(target);
+                    }
+                    let _ = cfg.save(&Config::default_path());
+                }
+                let cfg = config.borrow().clone();
+                let page = dashboard::build(&window, &nav, &cfg, false);
+                nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+            }
+        });
+    }
+    shell("Endpunkt hinzufügen", &content, Some(add))
 }
 
 fn done_page(
@@ -499,7 +549,7 @@ fn done_page(
             };
             let config = Config {
                 folders: folders.clone(),
-                target: target.clone(),
+                targets: vec![target.clone()],
                 settings,
             };
             if config.save(&Config::default_path()).is_err() {
@@ -508,7 +558,7 @@ fn done_page(
             if autostart {
                 let _ = cloudsave_core::set_autostart(true);
             }
-            let page = dashboard::build(&window, &config, true);
+            let page = dashboard::build(&window, &nav, &config, true);
             nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
         });
     }

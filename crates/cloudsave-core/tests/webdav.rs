@@ -118,10 +118,10 @@ fn webdav_backend_roundtrip_via_mock_server() {
     std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
     let cfg = Config {
         folders: vec![src.clone()],
-        target: Target::Webdav {
+        targets: vec![Target::Webdav {
             url: format!("http://127.0.0.1:{}/base", port),
             user: "u1".to_string(),
-        },
+        }],
         settings: Settings::default(),
     };
 
@@ -150,6 +150,6 @@ fn webdav_backend_roundtrip_via_mock_server() {
     assert_eq!(r.deleted, 1);
     assert!(!srv.join("base/quelle/unter/b.txt").exists());
 
-    let backend = backend_for(&cfg.target).unwrap();
+    let backend = backend_for(&cfg.targets[0]).unwrap();
     backend.test_connection().unwrap();
 }

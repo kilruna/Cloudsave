@@ -21,7 +21,12 @@ struct SyncUi {
     btn: gtk::Button,
 }
 
-pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Widget {
+pub fn build(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    config: &Config,
+    autostart: bool,
+) -> gtk::Widget {
     let config = Rc::new(RefCell::new(config.clone()));
     let state_path = Config::default_state_path();
 
@@ -226,18 +231,23 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
         let config = config.clone();
         let sub = status_sub.clone();
         test_btn.connect_clicked(move |_| {
-            let target = config.borrow().target.clone();
+            let targets = config.borrow().targets.clone();
             let sub = sub.clone();
             let (tx, rx) = mpsc::channel::<String>();
             std::thread::spawn(move || {
-                let msg = match cloudsave_core::backend_for(&target) {
-                    Ok(b) => match b.test_connection() {
-                        Ok(()) => "Ziel erreichbar ✓".to_string(),
-                        Err(e) => format!("Ziel nicht erreichbar: {}", e),
-                    },
-                    Err(e) => format!("Fehler: {}", e),
-                };
-                let _ = tx.send(msg);
+                let mut lines = Vec::new();
+                for t in &targets {
+                    let label = cloudsave_core::target_label(t);
+                    let msg = match cloudsave_core::backend_for(t) {
+                        Ok(b) => match b.test_connection() {
+                            Ok(()) => format!("{} ✓", label),
+                            Err(e) => format!("{}: nicht erreichbar ({})", label, e),
+                        },
+                        Err(e) => format!("{}: Fehler ({})", label, e),
+                    };
+                    lines.push(msg);
+                }
+                let _ = tx.send(lines.join("\n"));
             });
             glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
                 Ok(msg) => {
@@ -299,19 +309,36 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     target.add_css_class("card");
     target.add_css_class("target-card");
     target.set_valign(gtk::Align::Start);
-    let (t_name, t_sub_text) = match &config.borrow().target {
-        Target::Local { path } => ("Lokales Ziel", path.to_string_lossy().to_string()),
-        Target::Webdav { url, user } => ("WebDAV", format!("{} · Benutzer {}", url, user)),
-    };
-    let t_title = gtk::Label::new(Some(t_name));
-    t_title.add_css_class("target-title");
-    t_title.set_halign(gtk::Align::Start);
-    target.append(&t_title);
-    let t_sub = gtk::Label::new(Some(&t_sub_text));
-    t_sub.add_css_class("target-sub");
-    t_sub.set_halign(gtk::Align::Start);
-    t_sub.set_margin_top(4);
-    target.append(&t_sub);
+    {
+        let targets = config.borrow().targets.clone();
+        if targets.is_empty() {
+            let t_title = gtk::Label::new(Some("Kein Endpunkt konfiguriert"));
+            t_title.add_css_class("target-title");
+            t_title.set_halign(gtk::Align::Start);
+            target.append(&t_title);
+        }
+        for (i, t) in targets.iter().enumerate() {
+            if i > 0 {
+                let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+                sep.add_css_class("row-sep");
+                target.append(&sep);
+            }
+            let (t_name, t_sub_text) = match t {
+                Target::Local { path } => ("Lokaler Ordner", path.to_string_lossy().to_string()),
+                Target::Webdav { url, user } => ("WebDAV", format!("{} · Benutzer {}", url, user)),
+            };
+            let t_title = gtk::Label::new(Some(t_name));
+            t_title.add_css_class("target-title");
+            t_title.set_halign(gtk::Align::Start);
+            target.append(&t_title);
+            let t_sub = gtk::Label::new(Some(&t_sub_text));
+            t_sub.add_css_class("target-sub");
+            t_sub.set_halign(gtk::Align::Start);
+            t_sub.set_margin_top(4);
+            t_sub.set_wrap(true);
+            target.append(&t_sub);
+        }
+    }
     let t_sep = gtk::Separator::new(gtk::Orientation::Horizontal);
     t_sep.add_css_class("row-sep");
     t_sep.set_margin_top(16);
@@ -338,6 +365,28 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     auto_row.append(&auto_label);
     auto_row.append(&auto_switch);
     target.append(&auto_row);
+
+    let add_target_btn = gtk::Button::new();
+    add_target_btn.add_css_class("add-btn");
+    add_target_btn.set_halign(gtk::Align::Start);
+    add_target_btn.set_margin_top(10);
+    let add_target_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    add_target_box.append(&icon(Icon::Cloud, 18, 1.0, 1.0, 1.0));
+    add_target_box.append(&gtk::Label::new(Some("Weiteren Endpunkt hinzufügen")));
+    add_target_btn.set_child(Some(&add_target_box));
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        let config = config.clone();
+        add_target_btn.connect_clicked(move |_| {
+            nav.push(&crate::onboarding::add_target_page(
+                &window,
+                &nav,
+                config.clone(),
+            ));
+        });
+    }
+    target.append(&add_target_btn);
     right.append(&target);
 
     let ui = SyncUi {
