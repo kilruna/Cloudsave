@@ -55,6 +55,8 @@ pub enum Target {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
     #[serde(default = "legacy_sync_mode")]
     pub sync_mode: SyncMode,
     #[serde(default = "default_true")]
@@ -90,6 +92,7 @@ fn default_interval() -> u64 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            exclude_patterns: Vec::new(),
             sync_mode: SyncMode::Backup,
             auto_sync: default_true(),
             autostart: false,

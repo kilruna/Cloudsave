@@ -399,3 +399,69 @@ fn incomplete_local_upload_preserves_previous_backup_and_cleans_tempfile() {
     assert_eq!(fs::read(dst.join(rel)).unwrap(), b"short");
     assert_eq!(fs::read_dir(&dst).unwrap().count(), 1);
 }
+
+#[test]
+fn exclusion_patterns_skip_nested_noise_and_never_delete_existing_excluded_backups() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir_all(src.join("project/node_modules")).unwrap();
+    fs::create_dir_all(src.join(".cache")).unwrap();
+    for file in [
+        "keep.txt",
+        "old.tmp",
+        "project/node_modules/package.js",
+        ".cache/cache.db",
+    ] {
+        fs::write(src.join(file), b"original").unwrap();
+    }
+    let dst = tmp.path().join("backup");
+    let state = tmp.path().join("state.db");
+    let mut cfg = make_config(&src, &dst);
+    assert_eq!(sync(&cfg, &state).unwrap().uploaded, 4);
+    cfg.settings.exclude_patterns = vec!["*.tmp".into(), "node_modules".into(), ".cache/**".into()];
+    fs::write(src.join("new.tmp"), b"skip").unwrap();
+    fs::remove_file(src.join("old.tmp")).unwrap();
+    fs::remove_file(src.join("keep.txt")).unwrap();
+    let report = sync(&cfg, &state).unwrap();
+    assert!(report.errors.is_empty());
+    assert_eq!(report.deleted, 1);
+    assert!(dst.join("Documents/old.tmp").exists());
+    assert!(!dst.join("Documents/new.tmp").exists());
+    assert!(dst
+        .join("Documents/project/node_modules/package.js")
+        .exists());
+    cfg.settings.exclude_patterns = vec!["[".into()];
+    assert!(sync(&cfg, &state).is_err());
+    assert!(dst.join("Documents/old.tmp").exists());
+}
+
+#[test]
+fn exclusions_apply_to_all_targets_and_survive_config_roundtrip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("source");
+    fs::create_dir_all(src.join("nested/.cache")).unwrap();
+    fs::write(src.join("nested/.cache/data"), b"ignore").unwrap();
+    fs::write(src.join("keep"), b"keep").unwrap();
+    let mut cfg = make_config(&src, &tmp.path().join("one"));
+    cfg.targets.push(Target::Local {
+        path: tmp.path().join("two"),
+    });
+    cfg.settings.exclude_patterns = vec![".cache".into()];
+    let config = tmp.path().join("config.toml");
+    cfg.save(&config).unwrap();
+    let report = sync(
+        &Config::load(&config).unwrap(),
+        &tmp.path().join("state.db"),
+    )
+    .unwrap();
+    assert_eq!(report.uploaded, 2);
+    assert!(report.errors.is_empty());
+    for target in ["one", "two"] {
+        assert!(tmp.path().join(target).join("source/keep").exists());
+        assert!(!tmp
+            .path()
+            .join(target)
+            .join("source/nested/.cache/data")
+            .exists());
+    }
+}

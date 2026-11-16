@@ -187,6 +187,56 @@ pub fn build(
     interval_row.append(&interval_spin);
     settings_body.append(&interval_row);
 
+    let exclusions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    exclusions_box.add_css_class("folder-row");
+    let exclusions_title = gtk::Label::new(Some("Dateien und Ordner ausschließen"));
+    exclusions_title.set_xalign(0.0);
+    exclusions_title.add_css_class("row-label");
+    exclusions_box.append(&exclusions_title);
+    let exclusions_hint = gtk::Label::new(Some("Ein Muster pro Zeile, z. B. .cache, node_modules oder *.tmp. Pfade mit / gelten relativ zum Quellordner. Vorhandene Sicherungen ausgeschlossener Dateien bleiben erhalten."));
+    exclusions_hint.set_wrap(true);
+    exclusions_hint.set_xalign(0.0);
+    exclusions_hint.add_css_class("dim-label");
+    exclusions_box.append(&exclusions_hint);
+    let exclusions_edit = gtk::TextView::new();
+    exclusions_edit.set_monospace(true);
+    exclusions_edit.set_height_request(88);
+    exclusions_edit
+        .buffer()
+        .set_text(&config.borrow().settings.exclude_patterns.join("\n"));
+    exclusions_box.append(&exclusions_edit);
+    let exclusions_status = gtk::Label::new(None);
+    exclusions_status.set_wrap(true);
+    exclusions_status.set_xalign(0.0);
+    exclusions_box.append(&exclusions_status);
+    let exclusions_save = gtk::Button::with_label("Ausschlüsse speichern");
+    exclusions_box.append(&exclusions_save);
+    {
+        let config = config.clone();
+        exclusions_save.connect_clicked(move |_| {
+            let buffer = exclusions_edit.buffer();
+            let patterns: Vec<String> = buffer
+                .text(&buffer.start_iter(), &buffer.end_iter(), false)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect();
+            let mut next = config.borrow().clone();
+            match cloudsave_core::validate_exclusion_patterns(&patterns).and_then(|()| {
+                next.settings.exclude_patterns = patterns;
+                next.save(&Config::default_path())
+            }) {
+                Ok(()) => {
+                    *config.borrow_mut() = next;
+                    exclusions_status.set_text("Ausschlüsse gespeichert");
+                }
+                Err(error) => exclusions_status.set_text(&format!("Nicht gespeichert: {error}")),
+            }
+        });
+    }
+    settings_body.append(&exclusions_box);
+
     let mode_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     mode_box.add_css_class("folder-row");
     let mode_label = gtk::Label::new(Some("Sicherungsmodus"));

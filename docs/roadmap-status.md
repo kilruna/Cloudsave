@@ -5,7 +5,7 @@ Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 - [x] Zugangsdaten im System-Schlüsselbund (Secret Service, GNOME Keyring/KWallet); bestehende Passwortdateien werden erst nach erfolgreicher Übernahme entfernt. Einrichtung zeigt Fehler an und speichert im Hintergrund.
 - [x] Wählbarer Backup-Modus ohne Löschweitergabe. Neue Profile starten im Backup-Modus; vorhandene Profile behalten die bisherige Spiegelung. Der Modus ist im Dashboard umstellbar.
 - [x] Abbruchsichere Uploads: lokale Tempdatei mit Größenprüfung/fsync/atomarem Ersetzen; WebDAV mit exklusivem temporärem PUT und MOVE. Fehlgeschlagene Übertragungen ersetzen keine gültige Sicherung.
-- [ ] Ausschlussmuster für nicht zu sichernde Dateien und Ordner.
+- [x] Ausschlussmuster: ein Glob pro Zeile im Dashboard. Namen ohne / gelten für jede Pfadkomponente; Pfade mit / relativ zur Quelle. Ausgeschlossene Bestandsdateien werden auch bei Spiegelung nicht gelöscht.
 - [ ] Ereignisbasierte Änderungserkennung mit Bündelung und Scan-Fallback.
 - [ ] Sicherungen durchsuchen und ausgewählte Dateien wiederherstellen.
 
