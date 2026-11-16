@@ -44,13 +44,30 @@ impl Backend for LocalBackend {
         Ok(())
     }
 
-    fn put(&self, rel: &Path, mut file: File, _size: u64) -> io::Result<u64> {
+    fn put(&self, rel: &Path, mut file: File, size: u64) -> io::Result<u64> {
         let p = self.root.join(rel);
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut out = fs::File::create(&p)?;
-        io::copy(&mut file, &mut out)
+        let parent = p
+            .parent()
+            .ok_or_else(|| io::Error::other("Ziel hat keinen Elternordner"))?;
+        let mut out = tempfile::Builder::new()
+            .prefix(".cloudsave-upload-")
+            .suffix(".part")
+            .tempfile_in(parent)?;
+        let written = io::copy(&mut file, &mut out)?;
+        if written != size {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Quelldatei hat sich während des Uploads verändert",
+            ));
+        }
+        out.as_file().sync_all()?;
+        out.persist(&p).map_err(|error| error.error)?;
+        #[cfg(unix)]
+        File::open(parent)?.sync_all()?;
+        Ok(written)
     }
 
     fn delete(&self, rel: &Path) -> io::Result<()> {

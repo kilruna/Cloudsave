@@ -374,3 +374,28 @@ fn new_profiles_default_to_backup_and_legacy_profiles_keep_mirroring() {
         SyncMode::Backup
     );
 }
+
+#[test]
+fn incomplete_local_upload_preserves_previous_backup_and_cleans_tempfile() {
+    use cloudsave_core::{Backend, LocalBackend};
+    let tmp = tempfile::tempdir().unwrap();
+    let dst = tmp.path().join("backup");
+    let backend = LocalBackend::new(&dst).unwrap();
+    let rel = Path::new("save.txt");
+    fs::write(dst.join(rel), b"previous valid backup").unwrap();
+    let source = tmp.path().join("source");
+    fs::write(&source, b"short").unwrap();
+    assert!(backend
+        .put(rel, fs::File::open(&source).unwrap(), 100)
+        .is_err());
+    assert_eq!(fs::read(dst.join(rel)).unwrap(), b"previous valid backup");
+    assert_eq!(fs::read_dir(&dst).unwrap().count(), 1);
+    assert_eq!(
+        backend
+            .put(rel, fs::File::open(&source).unwrap(), 5)
+            .unwrap(),
+        5
+    );
+    assert_eq!(fs::read(dst.join(rel)).unwrap(), b"short");
+    assert_eq!(fs::read_dir(&dst).unwrap().count(), 1);
+}

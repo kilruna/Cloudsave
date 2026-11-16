@@ -14,3 +14,4 @@ toml = "1.2"
 walkdir = "2"
 tempfile = "3"
 secret-service = { version = "6.0.0-rc.1", features = ["crypto-rust"] }
+getrandom = "0.4"
