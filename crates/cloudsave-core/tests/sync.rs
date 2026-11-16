@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use cloudsave_core::{sync, Config, Settings, SyncReport, Target};
+use cloudsave_core::{sync, Config, Settings, State, SyncReport, Target};
 
 fn make_config(src: &Path, dst: &Path) -> Config {
     Config {
@@ -43,6 +43,11 @@ fn local_backend_roundtrip_delta_and_delete() {
     assert!(dst.join("quelle/a.txt").exists());
     assert_eq!(fs::read(dst.join("quelle/unter/b.txt")).unwrap(), b"welt");
 
+    let state = State::open(&state_path).unwrap();
+    assert_eq!(state.count().unwrap(), 2);
+    assert_eq!(state.total_size().unwrap(), 9);
+    assert!(state.last_synced().unwrap().is_some());
+
     let r = sync(&cfg, &state_path).unwrap();
     assert_eq!(r.uploaded, 0);
     assert_eq!(r.skipped, 2);
@@ -60,6 +65,7 @@ fn local_backend_roundtrip_delta_and_delete() {
     let r = sync(&cfg, &state_path).unwrap();
     assert_eq!(r.deleted, 1);
     assert!(!dst.join("quelle/unter/b.txt").exists());
+    assert_eq!(state.count().unwrap(), 1);
 }
 
 #[test]

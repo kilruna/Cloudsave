@@ -61,3 +61,7 @@ Die Hauptansicht ist als **dunkles Dashboard** im Stil der Referenz gestaltet (d
 - **Gruppen als Karten** (`AdwPreferencesGroup`): „Gesicherte Ordner“ (Zeilen mit Checkbox rechts, plus Zeile „Anderer Ordner hinzufügen …“), „Ziel“ (Hetzner Storage Box + Button „Verbindung testen“ + Schalter „Automatisch synchronisieren“), „Einstellungen“ (Sync-Rhythmus als `AdwComboRow`, Schalter für Fehler-Benachrichtigung und Akku-Pause).
 
 Der Ersteinrichtungs-Flow (Welcome → Ordner → Ziel → fertig) wird als Nächstes auf derselben Basis umgesetzt.
+
+## Umgesetzt (PR #4): Onboarding + Dashboard
+
+Der Flow ist in `crates/cloudsave-app/src/onboarding.rs` als `AdwNavigationView` umgesetzt: Welcome → Ordner wählen (Checkboxen für vorhandene Standardordner, „Anderer Ordner …“ via FileDialog) → Ziel wählen (lokal aktiv; Hetzner Storage Box als „folgt in M2“ deaktiviert) → Fertig (schreibt `~/.config/cloudsave/config.toml` und startet den ersten Sync). Ohne vorhandene Config startet die App im Onboarding, sonst direkt im Dashboard (`dashboard.rs`): „Jetzt synchronisieren“ läuft `cloudsave-core::sync` im Worker-Thread, Status-Banner + Stat-Karten aktualisieren sich aus dem SQLite-State, Ordner-Checkboxen persistieren in die Config.

@@ -74,6 +74,32 @@ impl State {
         Ok(())
     }
 
+    pub fn count(&self) -> Result<i64> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+        Ok(n)
+    }
+
+    pub fn total_size(&self) -> Result<i64> {
+        let n: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(SUM(size), 0) FROM files", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(n)
+    }
+
+    pub fn last_synced(&self) -> Result<Option<i64>> {
+        let mut stmt = self.conn.prepare("SELECT MAX(synced_at) FROM files")?;
+        let result = stmt.query_row([], |row| row.get(0));
+        match result {
+            Ok(v) => Ok(v),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn all_paths(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare("SELECT path FROM files")?;
         let rows = stmt.query_map([], |row| row.get(0))?;

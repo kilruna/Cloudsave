@@ -1,3 +1,6 @@
+mod dashboard;
+mod onboarding;
+
 use adw::prelude::*;
 use gtk::glib;
 use gtk4 as gtk;
@@ -56,118 +59,17 @@ fn build_ui(app: &adw::Application) {
     window.set_title(Some("Cloudsave"));
     window.set_default_size(880, 700);
 
-    let toolbar = adw::ToolbarView::new();
-    let header = adw::HeaderBar::new();
-    let title = gtk::Label::new(Some("Cloudsave"));
-    title.add_css_class("title-2");
-    header.set_title_widget(Some(&title));
-    let sync_btn = gtk::Button::with_label("Jetzt synchronisieren");
-    sync_btn.add_css_class("suggested-action");
-    sync_btn.add_css_class("pill");
-    header.pack_end(&sync_btn);
-    toolbar.add_top_bar(&header);
-
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
-    content.set_margin_top(16);
-    content.set_margin_bottom(24);
-    content.set_halign(gtk::Align::Center);
-    content.set_width_request(720);
-    content.set_vexpand(true);
-
-    let banner = adw::Banner::new("Alles synchronisiert · letzter Sync vor 2 Minuten");
-    banner.set_revealed(true);
-    content.append(&banner);
-
-    let stats = gtk::Grid::new();
-    stats.set_column_spacing(16);
-    stats.set_hexpand(true);
-    stats.attach(&stat_card("0", "Dateien gesichert"), 0, 0, 1, 1);
-    stats.attach(&stat_card("0 B", "auf dem Ziel belegt"), 1, 0, 1, 1);
-    stats.attach(&stat_card("vor 2 Min", "letzter Sync"), 2, 0, 1, 1);
-    content.append(&stats);
-
-    let folders = adw::PreferencesGroup::builder()
-        .title("Gesicherte Ordner")
-        .build();
-    for (name, path, active) in [
-        ("Dokumente", "~/Dokumente", true),
-        ("Bilder", "~/Bilder", true),
-        ("Musik", "~/Musik", false),
-        ("Videos", "~/Videos", false),
-        ("Schreibtisch", "~/Schreibtisch", false),
-    ] {
-        let row = adw::ActionRow::builder().title(name).subtitle(path).build();
-        let check = gtk::CheckButton::new();
-        check.set_active(active);
-        check.set_valign(gtk::Align::Center);
-        row.set_activatable_widget(Some(&check));
-        row.add_suffix(&check);
-        folders.add(&row);
+    let nav = adw::NavigationView::new();
+    match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
+        Ok(config) => {
+            let page = dashboard::build(&window, &config, false);
+            nav.push(&adw::NavigationPage::new(&page, "Übersicht"));
+        }
+        Err(_) => {
+            onboarding::build(&window, &nav);
+        }
     }
-    let add_row = adw::ActionRow::builder()
-        .title("Anderer Ordner hinzufügen …")
-        .build();
-    folders.add(&add_row);
-    content.append(&folders);
 
-    let target = adw::PreferencesGroup::builder().title("Ziel").build();
-    let target_row = adw::ActionRow::builder()
-        .title("Hetzner Storage Box")
-        .subtitle("u123456.your-storagebox.de · WebDAV (443)")
-        .build();
-    let test_btn = gtk::Button::with_label("Verbindung testen");
-    test_btn.set_valign(gtk::Align::Center);
-    target_row.add_suffix(&test_btn);
-    target.add(&target_row);
-    let auto = adw::SwitchRow::builder()
-        .title("Automatisch synchronisieren")
-        .active(true)
-        .build();
-    target.add(&auto);
-    content.append(&target);
-
-    let settings = adw::PreferencesGroup::builder()
-        .title("Einstellungen")
-        .build();
-    let rhythm = adw::ComboRow::builder().title("Sync-Rhythmus").build();
-    let model = gtk::StringList::new(&["Bei jeder Änderung", "Stündlich", "Täglich"]);
-    rhythm.set_model(Some(&model));
-    rhythm.set_selected(0);
-    settings.add(&rhythm);
-    let notify = adw::SwitchRow::builder()
-        .title("Benachrichtigung bei Fehlern")
-        .active(true)
-        .build();
-    settings.add(&notify);
-    let battery = adw::SwitchRow::builder()
-        .title("Pausieren bei niedrigem Akku")
-        .build();
-    settings.add(&battery);
-    content.append(&settings);
-
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scrolled.set_child(Some(&content));
-    scrolled.set_vexpand(true);
-    toolbar.set_content(Some(&scrolled));
-
-    window.set_content(Some(&toolbar));
+    window.set_content(Some(&nav));
     window.present();
-}
-
-fn stat_card(value: &str, label: &str) -> gtk::Box {
-    let card = gtk::Box::new(gtk::Orientation::Vertical, 6);
-    card.add_css_class("stat-card");
-    card.set_hexpand(true);
-    let v = gtk::Label::new(Some(value));
-    v.add_css_class("stat-value");
-    v.set_xalign(0.0);
-    let l = gtk::Label::new(Some(label));
-    l.add_css_class("stat-label");
-    l.set_xalign(0.0);
-    card.append(&v);
-    card.append(&l);
-    card
 }
