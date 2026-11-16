@@ -465,3 +465,70 @@ fn exclusions_apply_to_all_targets_and_survive_config_roundtrip() {
             .exists());
     }
 }
+
+#[test]
+fn local_backup_target_may_not_overlap_its_source_even_through_symlinks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("save"), b"source").unwrap();
+    let mut cfg = make_config(&src, &src.join("backup"));
+    let state = tmp.path().join("state.db");
+    assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+    assert!(!src.join("backup").exists());
+    cfg.targets = vec![Target::Local {
+        path: tmp.path().to_path_buf(),
+    }];
+    assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&src, tmp.path().join("alias")).unwrap();
+        cfg.targets = vec![Target::Local {
+            path: tmp.path().join("alias/new-backup"),
+        }];
+        assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+        assert!(!src.join("new-backup").exists());
+    }
+    assert_eq!(fs::read(src.join("save")).unwrap(), b"source");
+}
+
+#[test]
+fn same_size_same_second_changes_are_uploaded_without_reuploading_legacy_unchanged_files() {
+    use std::time::{Duration, UNIX_EPOCH};
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("Documents");
+    fs::create_dir(&source).unwrap();
+    let file = source.join("save");
+    fs::write(&file, b"AAAA").unwrap();
+    let stamp = UNIX_EPOCH + Duration::new(1_700_000_000, 100);
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(stamp))
+        .unwrap();
+    let cfg = make_config(&source, &tmp.path().join("backup"));
+    let state = tmp.path().join("state.db");
+    assert_eq!(sync(&cfg, &state).unwrap().uploaded, 1);
+    fs::write(&file, b"BBBB").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(stamp + Duration::from_nanos(100)))
+        .unwrap();
+    let report = sync(&cfg, &state).unwrap();
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(
+        fs::read(tmp.path().join("backup/Documents/save")).unwrap(),
+        b"BBBB"
+    );
+    // A legacy second-based state stamp upgrades through hash verification, without another upload.
+    rusqlite::Connection::open(&state)
+        .unwrap()
+        .execute("UPDATE files SET mtime = 1700000000", [])
+        .unwrap();
+    let report = sync(&cfg, &state).unwrap();
+    assert_eq!(report.uploaded, 0);
+    assert_eq!(report.skipped, 1);
+}

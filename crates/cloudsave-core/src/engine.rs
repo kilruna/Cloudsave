@@ -17,11 +17,11 @@ pub struct SyncReport {
     pub errors: Vec<String>,
 }
 
-fn mtime_secs(meta: &fs::Metadata) -> i64 {
+fn mtime_stamp(meta: &fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
+        .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
         .unwrap_or(0)
 }
 
@@ -43,6 +43,20 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
         report
             .errors
             .push("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.".into());
+        return Ok(report);
+    }
+    for target in &config.targets {
+        if let Target::Local { path } = target {
+            let destination = crate::paths::resolved(path)?;
+            for folder in &config.folders {
+                let source = crate::paths::resolved(folder)?;
+                if destination.starts_with(&source) || source.starts_with(&destination) {
+                    report.errors.push(format!("Quelle {} und Ziel {} überlappen sich. Bitte einen getrennten Sicherungsordner wählen.", folder.display(), path.display()));
+                }
+            }
+        }
+    }
+    if !report.errors.is_empty() {
         return Ok(report);
     }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
@@ -116,7 +130,7 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             };
             let key = rel.to_string_lossy().to_string();
             sources.insert(key.clone(), folder.clone());
-            scanned.insert(key, (abs, meta.len() as i64, mtime_secs(&meta)));
+            scanned.insert(key, (abs, meta.len() as i64, mtime_stamp(&meta)));
         }
         if complete {
             complete_sources.insert(folder.clone());
@@ -149,7 +163,25 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
                 continue;
             }
             let unchanged = match state.get(&skey)? {
-                Some(entry) => entry.size == *size && entry.mtime == *mtime,
+                Some(entry) if entry.size == *size && entry.mtime == *mtime && *mtime != 0 => true,
+                Some(entry) if entry.size == *size => match file_hash(abs) {
+                    Ok(hash) if hash == entry.hash => {
+                        // Touches and legacy second-based stamps do not require re-uploading identical data.
+                        state.upsert(&skey, *size, *mtime, &hash)?;
+                        true
+                    }
+                    Ok(_) => false,
+                    Err(error) => {
+                        deletable_sources.remove(source);
+                        report.errors.push(format!(
+                            "{} · Quelle {}: {error}",
+                            target_label(target),
+                            abs.display()
+                        ));
+                        continue;
+                    }
+                },
+                Some(_) => false,
                 None => false,
             };
             if unchanged {
@@ -223,16 +255,18 @@ fn upload_one(
 ) -> Result<()> {
     let (abs, size, mtime) = (file.0.clone(), file.1, file.2);
     backend.mkdirs(rel)?;
-    let mut hasher = blake3::Hasher::new();
-    {
-        let mut f = fs::File::open(&abs)?;
-        std::io::copy(&mut f, &mut hasher)?;
-    }
-    let hash = hasher.finalize().to_hex().to_string();
+    let hash = file_hash(&abs)?;
     let f = fs::File::open(&abs)?;
     let written = backend.put(rel, f, size as u64)?;
     state.upsert(state_key, size, mtime, &hash)?;
     report.uploaded += 1;
     report.bytes += written;
     Ok(())
+}
+
+fn file_hash(path: &Path) -> std::io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    let mut file = fs::File::open(path)?;
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(hasher.finalize().to_hex().to_string())
 }

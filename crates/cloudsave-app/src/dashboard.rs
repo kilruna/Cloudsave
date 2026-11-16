@@ -2,14 +2,16 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::mpsc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use cloudsave_core::{Config, State, SyncMode, SyncReport, Target};
+use cloudsave_core::{
+    ChangeWatcher, Config, State, SyncMode, SyncReport, Target, WatchConfig, WatchEvent,
+};
 
 use crate::{icon, Icon};
 
@@ -73,6 +75,12 @@ pub fn build(
     progress.set_width_request(560);
     progress.set_margin_top(14);
     page.append(&progress);
+
+    let auto_status = gtk::Label::new(None);
+    auto_status.set_wrap(true);
+    auto_status.set_xalign(0.0);
+    auto_status.add_css_class("dim-label");
+    page.append(&auto_status);
 
     let cols = gtk::Box::new(gtk::Orientation::Horizontal, 24);
     cols.set_hexpand(true);
@@ -518,24 +526,50 @@ pub fn build(
         let config = config.clone();
         let ui = ui.clone();
         let state_path = state_path.clone();
-        let last = Rc::new(std::cell::Cell::new(0i64));
-        glib::timeout_add_local(Duration::from_secs(30), move || {
-            let (auto, interval_min) = {
-                let cfg = config.borrow();
-                (
-                    cfg.settings.auto_sync,
-                    cfg.settings.sync_interval_minutes.max(1),
-                )
-            };
-            if !auto || !ui.btn.is_sensitive() {
+        let mut watch_config = WatchConfig::for_config(&config.borrow(), &state_path);
+        let watcher = ChangeWatcher::new(watch_config.clone());
+        let mut pending: Option<Instant> = None;
+        let mut last = Instant::now();
+        let owner = page.downgrade();
+        glib::timeout_add_local(Duration::from_millis(500), move || {
+            if owner.upgrade().is_none() {
+                return glib::ControlFlow::Break;
+            }
+            let cfg = config.borrow();
+            let next_watch_config = WatchConfig::for_config(&cfg, &state_path);
+            if next_watch_config != watch_config {
+                watch_config = next_watch_config;
+                watcher.update(watch_config.clone());
+                pending = None;
+            }
+            while let Ok(event) = watcher.try_recv() {
+                match event {
+                    WatchEvent::Changed if cfg.settings.auto_sync => pending = Some(Instant::now()),
+                    WatchEvent::Ready => {
+                        auto_status.set_text("Änderungen werden automatisch erkannt.")
+                    }
+                    WatchEvent::Unavailable(error) => auto_status.set_text(&format!(
+                        "Änderungserkennung eingeschränkt; Zeitplan bleibt aktiv: {error}"
+                    )),
+                    _ => {}
+                }
+            }
+            if !cfg.settings.auto_sync {
+                pending = None;
                 return glib::ControlFlow::Continue;
             }
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            if now - last.get() >= (interval_min * 60) as i64 {
-                last.set(now);
+            let due = pending.is_some_and(|time| time.elapsed() >= Duration::from_secs(3));
+            let fallback_due = last.elapsed()
+                >= Duration::from_secs(
+                    cfg.settings.sync_interval_minutes.max(1).saturating_mul(60),
+                );
+            drop(cfg);
+            if ui.btn.is_sensitive() && (due || fallback_due) {
+                if fallback_due {
+                    watcher.update(watch_config.clone());
+                }
+                pending = None;
+                last = Instant::now();
                 trigger_sync(&config, &ui, &state_path);
             }
             glib::ControlFlow::Continue
