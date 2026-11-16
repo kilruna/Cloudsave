@@ -314,31 +314,33 @@ fn target_page(
     }
 
     {
-        let choice = choice.clone();
-        let next = next.clone();
-        let radio_webdav = radio_webdav.clone();
-        let user_entry = user_entry.clone();
-        let url_entry = url_entry.clone();
-        let pw_entry = pw_entry.clone();
-        let update = Rc::new(move || {
-            if !radio_webdav.is_active() {
-                return;
-            }
-            let user = user_entry.text().trim().to_string();
-            let url = url_entry.text().trim().to_string();
-            let password = pw_entry.text().to_string();
-            let valid = !user.is_empty() && !url.is_empty() && !password.is_empty();
-            *choice.borrow_mut() = if valid {
-                Some(TargetChoice::Webdav {
-                    url,
-                    user,
-                    password,
-                })
-            } else {
-                None
-            };
-            next.set_sensitive(valid);
-        });
+        let update = {
+            let choice = choice.clone();
+            let next = next.clone();
+            let radio_webdav = radio_webdav.clone();
+            let user_entry = user_entry.clone();
+            let url_entry = url_entry.clone();
+            let pw_entry = pw_entry.clone();
+            Rc::new(move || {
+                if !radio_webdav.is_active() {
+                    return;
+                }
+                let user = user_entry.text().trim().to_string();
+                let url = url_entry.text().trim().to_string();
+                let password = pw_entry.text().to_string();
+                let valid = !user.is_empty() && !url.is_empty() && !password.is_empty();
+                *choice.borrow_mut() = if valid {
+                    Some(TargetChoice::Webdav {
+                        url,
+                        user,
+                        password,
+                    })
+                } else {
+                    None
+                };
+                next.set_sensitive(valid);
+            })
+        };
         let u = update.clone();
         user_entry.connect_changed(move |_| u());
         let u = update.clone();
@@ -346,14 +348,14 @@ fn target_page(
         let u = update.clone();
         pw_entry.connect_changed(move |_| u());
         let u = update.clone();
-        let choice2 = choice.clone();
-        let next2 = next.clone();
+        let choice = choice.clone();
+        let next = next.clone();
         radio_webdav.connect_toggled(move |c| {
             if c.is_active() {
                 u();
             } else {
-                *choice2.borrow_mut() = None;
-                next2.set_sensitive(false);
+                *choice.borrow_mut() = None;
+                next.set_sensitive(false);
             }
         });
     }
@@ -420,11 +422,7 @@ fn done_page(
             path.display().to_string(),
             Target::Local { path: path.clone() },
         ),
-        TargetChoice::Webdav {
-            url,
-            user,
-            password,
-        } => (
+        TargetChoice::Webdav { url, user, .. } => (
             format!("{} (Benutzer {})", url, user),
             Target::Webdav {
                 url: url.clone(),
