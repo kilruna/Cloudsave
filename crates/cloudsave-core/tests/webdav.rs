@@ -12,7 +12,11 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-fn handle_conn(mut stream: TcpStream, srv_root: &Path) {
+fn handle_conn(stream: TcpStream, srv_root: &Path) {
+    handle_conn_mode(stream, srv_root, None);
+}
+
+fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 8192];
     let header_end = loop {
@@ -35,8 +39,16 @@ fn handle_conn(mut stream: TcpStream, srv_root: &Path) {
     let method = parts.next().unwrap_or("").to_string();
     let path = parts.next().unwrap_or("").to_string();
     let mut content_length = 0usize;
+    let mut destination = String::new();
+    let mut exclusive = false;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("destination") {
+                destination = v.trim().to_string();
+            }
+            if k.trim().eq_ignore_ascii_case("if-none-match") {
+                exclusive = v.trim() == "*";
+            }
             if k.trim().eq_ignore_ascii_case("content-length") {
                 content_length = v.trim().parse().unwrap_or(0);
             }
@@ -55,28 +67,39 @@ fn handle_conn(mut stream: TcpStream, srv_root: &Path) {
     let rel = path.trim_start_matches('/');
     let fs_path = srv_root.join(rel);
 
-    let (status, reason, extra) = match method.as_str() {
-        "PROPFIND" => (
-            207,
-            "Multi-Status",
-            Some("Content-Type: application/xml\r\n".to_string()),
-        ),
-        "MKCOL" => {
-            let _ = fs::create_dir_all(&fs_path);
-            (201, "Created", None)
-        }
-        "PUT" => {
-            if let Some(p) = fs_path.parent() {
-                let _ = fs::create_dir_all(p);
+    let (status, reason, extra) = if fail == Some(method.as_str()) {
+        (500, "Injected failure", None)
+    } else {
+        match method.as_str() {
+            "PROPFIND" => (
+                207,
+                "Multi-Status",
+                Some("Content-Type: application/xml\r\n".to_string()),
+            ),
+            "MKCOL" => {
+                let _ = fs::create_dir_all(&fs_path);
+                (201, "Created", None)
             }
-            let _ = fs::write(&fs_path, &body);
-            (201, "Created", None)
+            "PUT" if exclusive && fs_path.exists() => (412, "Precondition Failed", None),
+            "MOVE" => {
+                let destination = reqwest::Url::parse(&destination).unwrap();
+                let dest = srv_root.join(destination.path().trim_start_matches('/'));
+                fs::rename(&fs_path, &dest).unwrap();
+                (201, "Created", None)
+            }
+            "PUT" => {
+                if let Some(p) = fs_path.parent() {
+                    let _ = fs::create_dir_all(p);
+                }
+                let _ = fs::write(&fs_path, &body);
+                (201, "Created", None)
+            }
+            "DELETE" => {
+                let _ = fs::remove_file(&fs_path);
+                (204, "No Content", None)
+            }
+            _ => (405, "Method Not Allowed", None),
         }
-        "DELETE" => {
-            let _ = fs::remove_file(&fs_path);
-            (204, "No Content", None)
-        }
-        _ => (405, "Method Not Allowed", None),
     };
     let body_out = if method == "PROPFIND" {
         r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"></D:multistatus>"#.to_string()
@@ -194,4 +217,42 @@ fn authentication_failure_is_reported_with_target_and_source() {
         .errors
         .iter()
         .any(|e| e.contains("401") && e.contains(&url) && e.contains(&src.display().to_string())));
+}
+
+#[test]
+fn failed_temporary_put_or_move_preserves_previous_webdav_backup() {
+    use cloudsave_core::{Backend, WebdavBackend};
+    for failed_method in ["PUT", "MOVE"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let srv = tmp.path().join("server");
+        fs::create_dir_all(srv.join("base/Documents")).unwrap();
+        fs::write(
+            srv.join("base/Documents/save.txt"),
+            b"valid previous backup",
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/base", listener.local_addr().unwrap());
+        let server_root = srv.clone();
+        thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                handle_conn_mode(stream, &server_root, Some(failed_method));
+            }
+        });
+        let source = tmp.path().join("source");
+        fs::write(&source, b"replacement").unwrap();
+        let backend = WebdavBackend::new(&url, "qa", "synthetic").unwrap();
+        assert!(backend
+            .put(
+                Path::new("Documents/save.txt"),
+                fs::File::open(&source).unwrap(),
+                11
+            )
+            .is_err());
+        assert_eq!(
+            fs::read(srv.join("base/Documents/save.txt")).unwrap(),
+            b"valid previous backup"
+        );
+        assert_eq!(fs::read_dir(srv.join("base/Documents")).unwrap().count(), 1);
+    }
 }

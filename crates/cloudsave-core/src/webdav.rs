@@ -136,19 +136,47 @@ impl Backend for WebdavBackend {
     }
 
     fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
-        let url = self.url_for(rel);
+        let mut random = [0u8; 16];
+        getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
+        let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
+        let temporary = rel.with_file_name(format!(".cloudsave-upload-{token}.part"));
+        let url = self.url_for(&temporary);
         let body = reqwest::blocking::Body::sized(file, size);
         let resp = self
             .request(reqwest::Method::PUT, &url)
+            .header(reqwest::header::IF_NONE_MATCH, "*")
             .body(body)
             .send()
             .map_err(|e| io::Error::other(e.to_string()))?;
         let st = resp.status();
-        if st.is_success() || st.as_u16() == 201 || st.as_u16() == 204 {
-            Ok(size)
-        } else {
-            Err(io::Error::other(format!("PUT {} -> HTTP {}", url, st)))
+        if !st.is_success() {
+            // In particular, 412 means the path belongs to somebody else: never delete it.
+            return Err(io::Error::other(format!(
+                "Temporärer PUT -> HTTP {st}; bestehende Sicherung unverändert"
+            )));
         }
+        let method = reqwest::Method::from_bytes(b"MOVE").map_err(io::Error::other)?;
+        let result = self
+            .request(method, &url)
+            .header("Destination", self.url_for(rel))
+            .header("Overwrite", "T")
+            .send()
+            .map_err(|error| io::Error::other(error.to_string()))
+            .and_then(|response| {
+                if response.status().is_success() {
+                    Ok(size)
+                } else {
+                    Err(io::Error::other(format!(
+                        "MOVE -> HTTP {}; bestehende Sicherung nicht ersetzt",
+                        response.status()
+                    )))
+                }
+            });
+        if result.is_err() {
+            // Only clean up the random file whose exclusive PUT completed successfully.
+            let _ = self.delete(&temporary);
+        }
+        result
     }
 
     fn delete(&self, rel: &Path) -> io::Result<()> {
