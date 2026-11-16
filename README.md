@@ -1,8 +1,62 @@
 # Cloudsave
 
-Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du beliebige Ordner aus deinem Home-Verzeichnis – z. B. `~/Bilder` oder `~/Dokumente` – automatisch auf ein Cloud-Ziel sicherst, etwa eine **Hetzner Storage Box**, eine Nextcloud (WebDAV) oder S3-kompatiblen Speicher.
+Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du ausgewählte Ordner automatisch auf lokale Laufwerke oder ein WebDAV-Ziel sicherst, etwa eine **Hetzner Storage Box** oder Nextcloud.
 
 **Die Idee in einem Satz:** Ordner anhaken → Ziel wählen → fertig. Cloudsave erkennt selbstständig, welche Dateien sich geändert haben, und lädt nur diese hoch – ressourcenschonend im Hintergrund.
+
+## Schnell testen und Feedback geben
+
+Cloudsave ist eine frühe Testversion. Verwende für den ersten Versuch einen kleinen
+Testordner und ein getrenntes Sicherungsziel. Prüfe unter **Einstellungen**, dass
+der Modus **Backup (keine Löschungen)** gewählt ist: Neue Profile verwenden ihn
+automatisch, bestehende Profile können weiterhin auf Spiegelung stehen.
+
+### Installieren oder aktualisieren
+
+Voraussetzungen: Linux mit grafischer Sitzung, Flatpak und für WebDAV ein
+verfügbarer System-Schlüsselbund (GNOME Keyring oder KWallet mit Secret Service).
+
+1. Öffne die [Flatpak-Builds auf GitHub](https://github.com/kilruna/Cloudsave/actions/workflows/flatpak.yml?query=branch%3Avibe%2Fcloudsave-plan-1926b5) und wähle den neuesten **erfolgreichen** Lauf des Hauptbranches `vibe/cloudsave-plan-1926b5`.
+2. Lade unten unter **Artifacts** das Paket **cloudsave.flatpak** herunter. Dafür ist eine GitHub-Anmeldung erforderlich. Die Pakete bleiben 14 Tage verfügbar.
+3. Entpacke das ZIP und öffne ein Terminal im Ordner mit der Datei `cloudsave.flatpak`. Führe dort aus:
+
+```bash
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user --reinstall ./cloudsave.flatpak
+flatpak run org.cloudsave.Cloudsave
+```
+
+Eine bereits laufende Instanz vorher über **Einstellungen → App beenden** schließen.
+Dieses Update erhält die vorhandene Konfiguration. Die Installation zeigt die
+angeforderten Berechtigungen an; Home wird für Ordnerliste und Quellen lesbar gemacht.
+
+### Kurzer Funktionstest
+
+1. **Einrichten:** Einen Ordner mit einigen Testdateien auswählen und einen anderen lokalen Ordner als Sicherungsziel wählen. Das Ziel darf nicht innerhalb der Quelle liegen. **Sync einrichten & starten** klicken und die gesicherten Dateiinhalte vergleichen.
+2. **Automatik:** Eine Testdatei ändern und die automatische Übertragung prüfen. Normalerweise startet sie nach etwa drei Sekunden Ruhezeit; bei eingeschränkter Dateisystem-/Portal-Erkennung greift das eingestellte Scan-Intervall. Auto-Sync ausschalten: Weitere Änderungen dürfen erst nach **Jetzt synchronisieren** übertragen werden.
+3. **Ausschlüsse:** Unter Einstellungen `*.tmp` eintragen und **Ausschlüsse speichern** klicken. Eine neue `.tmp`-Datei in der Quelle anlegen und **Jetzt synchronisieren** klicken. Diese Datei darf nicht im Ziel erscheinen.
+4. **Backup-Modus:** Eine bereits gesicherte Testdatei lokal löschen und synchronisieren. Im Backup-Modus bleibt ihre Sicherung erhalten. Den Spiegelungsmodus ausschließlich mit Testdaten ausprobieren; er gibt echte Dateilöschungen an das Ziel weiter.
+5. **Wiederherstellen:** **Sicherungen wiederherstellen → Sicherungen laden**, Dateien markieren und einen dritten, leeren Zielordner wählen. Inhalte vergleichen. Beim erneuten Wiederherstellen bleiben vorhandene Dateien unverändert.
+6. **Optional WebDAV:** Mit einem Testverzeichnis auf dem Server wiederholen. Nach **App beenden** und Neustart müssen gespeicherte Zugangsdaten über den Schlüsselbund verfügbar sein; dieser muss gegebenenfalls entsperrt werden. Bei Hetzner müssen WebDAV und äußere Erreichbarkeit aktiviert sein. Subaccounts benötigen ihre eigene Domain, z. B. `https://uXXXXX-sub1.your-storagebox.de` zum Benutzer `uXXXXX-sub1`.
+
+### Feedback melden
+
+Erstelle ein [GitHub-Issue](https://github.com/kilruna/Cloudsave/issues/new), auch für
+unklare Bedienung oder Darstellungsprobleme. Diese Angaben helfen beim Nachstellen:
+
+```text
+Build: Link zum verwendeten GitHub-Actions-Lauf
+System: Distribution/Version, Desktop (GNOME/KDE/…), Wayland oder X11
+Sicherung: lokales Ziel oder WebDAV; Backup- oder Spiegelungsmodus
+Schritte: Was wurde nacheinander angeklickt/geändert?
+Erwartet: Was sollte passieren?
+Tatsächlich: Was ist passiert? Genaue Fehlermeldung/Screenshot ergänzen.
+```
+
+Installationsdetails liefert `flatpak info org.cloudsave.Cloudsave`. Für zusätzliche
+Terminalmeldungen die App zuerst über **App beenden** schließen und dann mit
+`flatpak run org.cloudsave.Cloudsave` im Terminal starten. Passwörter, Tokens und
+private Pfade in Meldungen oder Screenshots bitte schwärzen.
 
 ## Highlights
 
@@ -10,9 +64,9 @@ Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du beliebige Ordner a
 - **Mehrere Quellordner:** Beliebig viele Verzeichnisse pro Ziel – per Datei-Auswahl hinzufügen und jederzeit per Häkchen an- bzw. abwählen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
-- **Sichere Zugangsdaten:** Passwörter liegen nie in der `config.toml`, sondern in einer Datei mit `0600`-Berechtigung im App-Config-Verzeichnis (Fallback: Umgebungsvariable).
+- **Sichere Zugangsdaten:** Passwörter liegen im System-Schlüsselbund. Alte Passwortdateien werden nach erfolgreicher Übernahme entfernt.
 - **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`) und läuft nach dem Schließen des Fensters im Hintergrund weiter; der Auto-Sync läuft im einstellbaren Intervall (Standard: 5 Minuten) und überträgt nur Geändertes.
-- **Ressourcenschonend:** Zwischen den Syncs wird nur stat-geprüft, nicht die ganze Platte gelesen; laufender Sync belegt keine UI.
+- **Ressourcenschonend:** Datei-Ereignisse lösen gebündelte Syncs aus; ein geplanter Scan dient als Fallback. Übertragungen laufen außerhalb des UI-Threads.
 
 ## Ziele (Protokolle)
 
@@ -20,10 +74,10 @@ Verfügbar: **WebDAV (HTTPS)** – z. B. Hetzner Storage Box (`https://uXXXXX.yo
 
 ## Technik
 
-- **Rust** als Sprache – Workspace mit getrennter Sync-Engine (`cloudsave-core`), GTK-Oberfläche (`cloudsave-app`) und Hintergrund-Dienst (`cloudsave-daemon`)
+- **Rust** als Sprache – Workspace mit Sync-Engine (`cloudsave-core`), GTK-Oberfläche (`cloudsave-app`) und CLI (`cloudsave-cli`)
 - **GTK 4 / libadwaita** für eine native, einfache Bedienung
-- **Flatpak** (GNOME-SDK); Ordner-Zugriff über das Dokumenten-Portal statt pauschalem Home-Zugriff
-- **SQLite** für den Sync-Status, **D-Bus** für die Kommunikation zwischen UI und Daemon
+- **Flatpak** (GNOME-SDK); Home-Lesezugriff für die Ordnerliste und Quellen, zusätzliche Ordner und Schreibziele über das Dokumenten-Portal
+- **SQLite** für den Sync-Status, **D-Bus/Secret Service** für den System-Schlüsselbund
 
 ## Dokumentation
 
