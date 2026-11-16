@@ -180,11 +180,12 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     settings_body.append(&interval_row);
 
     {
+        let autostart = config.borrow().settings.autostart;
         let config = config.clone();
         switch_row(
             &settings_body,
             "Beim Systemstart automatisch starten",
-            config.borrow().settings.autostart,
+            autostart,
             move |on| {
                 {
                     let mut cfg = config.borrow_mut();
@@ -196,11 +197,12 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
         );
     }
     {
+        let run_bg = config.borrow().settings.run_in_background;
         let config = config.clone();
         switch_row(
             &settings_body,
             "Beim Schließen im Hintergrund weiterlaufen",
-            config.borrow().settings.run_in_background,
+            run_bg,
             move |on| {
                 let mut cfg = config.borrow_mut();
                 cfg.settings.run_in_background = on;
