@@ -22,15 +22,30 @@ pub enum Target {
 pub struct Settings {
     #[serde(default = "default_true")]
     pub auto_sync: bool,
+    #[serde(default)]
+    pub autostart: bool,
+    #[serde(default = "default_true")]
+    pub run_in_background: bool,
+    #[serde(default = "default_interval")]
+    pub sync_interval_minutes: u64,
 }
 
 fn default_true() -> bool {
     true
 }
 
+fn default_interval() -> u64 {
+    5
+}
+
 impl Default for Settings {
     fn default() -> Self {
-        Self { auto_sync: true }
+        Self {
+            auto_sync: default_true(),
+            autostart: false,
+            run_in_background: default_true(),
+            sync_interval_minutes: default_interval(),
+        }
     }
 }
 

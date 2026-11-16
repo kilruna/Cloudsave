@@ -236,8 +236,8 @@ fn target_page(
     group.add(&row_local);
 
     let row_webdav = adw::ActionRow::builder()
-        .title("Hetzner Storage Box (WebDAV)")
-        .subtitle("https://<benutzername>.your-storagebox.de – Port 443")
+        .title("WebDAV (HTTPS)")
+        .subtitle("z. B. Hetzner Storage Box, Nextcloud, ownCloud – Port 443")
         .build();
     let radio_webdav = gtk::CheckButton::new();
     radio_webdav.set_group(Some(&radio_local));
@@ -246,14 +246,27 @@ fn target_page(
     row_webdav.add_suffix(&radio_webdav);
     group.add(&row_webdav);
 
+    for (title, sub) in [
+        ("SFTP", "noch nicht verfügbar"),
+        ("SSH (rsync)", "noch nicht verfügbar"),
+        ("FTP / FTPS", "noch nicht verfügbar"),
+    ] {
+        let row = adw::ActionRow::builder().title(title).subtitle(sub).build();
+        row.set_sensitive(false);
+        let radio = gtk::CheckButton::new();
+        radio.set_sensitive(false);
+        radio.set_valign(gtk::Align::Center);
+        row.add_suffix(&radio);
+        group.add(&row);
+    }
+
     let form = adw::PreferencesGroup::builder()
-        .title("Zugangsdaten Storage Box")
+        .title("Zugangsdaten (WebDAV)")
+        .description("Beispiel Hetzner Storage Box: https://u123456.your-storagebox.de")
         .visible(false)
         .build();
-    let user_entry = adw::EntryRow::builder()
-        .title("Benutzername (z. B. u123456)")
-        .build();
-    let url_entry = adw::EntryRow::builder().title("Server").build();
+    let user_entry = adw::EntryRow::builder().title("Benutzername").build();
+    let url_entry = adw::EntryRow::builder().title("Server-URL").build();
     let pw_entry = adw::PasswordEntryRow::builder().title("Passwort").build();
     let test_row = adw::ActionRow::builder().title("Verbindung").build();
     let test_btn = gtk::Button::with_label("Testen");
@@ -274,16 +287,6 @@ fn target_page(
         let form = form.clone();
         radio_webdav.connect_toggled(move |c| {
             form.set_visible(c.is_active());
-        });
-    }
-
-    {
-        let url_entry = url_entry.clone();
-        user_entry.connect_changed(move |e| {
-            let user = e.text().trim().to_string();
-            if !user.is_empty() {
-                url_entry.set_text(&format!("https://{}.your-storagebox.de", user));
-            }
         });
     }
 
@@ -463,9 +466,23 @@ fn done_page(
     start.add_css_class("suggested-action");
     start.add_css_class("pill");
     start.set_halign(gtk::Align::Center);
+
+    let autostart_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    autostart_row.add_css_class("folder-row");
+    let autostart_label = gtk::Label::new(Some("Beim Systemstart automatisch starten"));
+    autostart_label.add_css_class("row-label");
+    autostart_label.set_halign(gtk::Align::Start);
+    autostart_label.set_hexpand(true);
+    let autostart_switch = gtk::Switch::new();
+    autostart_switch.set_active(true);
+    autostart_switch.set_valign(gtk::Align::Center);
+    autostart_row.append(&autostart_label);
+    autostart_row.append(&autostart_switch);
+
     {
         let nav = nav.clone();
         let window = window.clone();
+        let autostart_switch = autostart_switch.clone();
         start.connect_clicked(move |_| {
             if let TargetChoice::Webdav {
                 url,
@@ -475,13 +492,21 @@ fn done_page(
             {
                 let _ = cloudsave_core::save_password(url, user, password);
             }
+            let autostart = autostart_switch.is_active();
+            let settings = Settings {
+                autostart,
+                ..Settings::default()
+            };
             let config = Config {
                 folders: folders.clone(),
                 target: target.clone(),
-                settings: Settings::default(),
+                settings,
             };
             if config.save(&Config::default_path()).is_err() {
                 return;
+            }
+            if autostart {
+                let _ = cloudsave_core::set_autostart(true);
             }
             let page = dashboard::build(&window, &config, true);
             nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
@@ -490,6 +515,7 @@ fn done_page(
 
     content.append(&title);
     content.append(&summary_label);
+    content.append(&autostart_row);
     content.append(&start);
     shell("Fertig", &content, None)
 }

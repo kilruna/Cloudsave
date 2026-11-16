@@ -1,3 +1,4 @@
+mod autostart;
 mod backend;
 mod config;
 mod engine;
@@ -5,6 +6,7 @@ mod secrets;
 mod state;
 mod webdav;
 
+pub use autostart::{autostart_enabled, set_autostart};
 pub use backend::{backend_for, Backend, LocalBackend};
 pub use config::{Config, Settings, Target};
 pub use engine::{sync, SyncReport};

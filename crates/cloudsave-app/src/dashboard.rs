@@ -151,37 +151,64 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     body_sep.add_css_class("row-sep");
     settings_body.append(&body_sep);
 
-    let rhythm_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    rhythm_row.add_css_class("folder-row");
-    let rhythm_label = gtk::Label::new(Some("Sync-Rhythmus"));
-    rhythm_label.add_css_class("row-label");
-    rhythm_label.set_halign(gtk::Align::Start);
-    rhythm_label.set_hexpand(true);
-    let rhythm = gtk::DropDown::from_strings(&["Bei jeder Änderung", "Stündlich", "Täglich"]);
-    rhythm.set_selected(0);
-    rhythm.set_valign(gtk::Align::Center);
-    rhythm_row.append(&rhythm_label);
-    rhythm_row.append(&rhythm);
-    settings_body.append(&rhythm_row);
+    let interval_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    interval_row.add_css_class("folder-row");
+    let interval_label = gtk::Label::new(Some("Sync-Intervall (Minuten)"));
+    interval_label.add_css_class("row-label");
+    interval_label.set_halign(gtk::Align::Start);
+    interval_label.set_hexpand(true);
+    let interval_adj = gtk::Adjustment::new(
+        config.borrow().settings.sync_interval_minutes as f64,
+        1.0,
+        120.0,
+        1.0,
+        10.0,
+        0.0,
+    );
+    let interval_spin = gtk::SpinButton::new(Some(&interval_adj), 1.0, 0);
+    interval_spin.set_valign(gtk::Align::Center);
+    {
+        let config = config.clone();
+        interval_spin.connect_value_changed(move |s| {
+            let mut cfg = config.borrow_mut();
+            cfg.settings.sync_interval_minutes = s.value().max(1.0) as u64;
+            let _ = cfg.save(&Config::default_path());
+        });
+    }
+    interval_row.append(&interval_label);
+    interval_row.append(&interval_spin);
+    settings_body.append(&interval_row);
 
-    for (name, active) in [
-        ("Benachrichtigung bei Fehlern", true),
-        ("Pausieren bei niedrigem Akku", false),
-    ] {
-        let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-        sep.add_css_class("row-sep");
-        settings_body.append(&sep);
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        row.add_css_class("folder-row");
-        let label = gtk::Label::new(Some(name));
-        label.add_css_class("row-label");
-        label.set_halign(gtk::Align::Start);
-        label.set_hexpand(true);
-        let sw = gtk::Switch::new();
-        sw.set_active(active);
-        row.append(&label);
-        row.append(&sw);
-        settings_body.append(&row);
+    {
+        let autostart = config.borrow().settings.autostart;
+        let config = config.clone();
+        switch_row(
+            &settings_body,
+            "Beim Systemstart automatisch starten",
+            autostart,
+            move |on| {
+                {
+                    let mut cfg = config.borrow_mut();
+                    cfg.settings.autostart = on;
+                    let _ = cfg.save(&Config::default_path());
+                }
+                let _ = cloudsave_core::set_autostart(on);
+            },
+        );
+    }
+    {
+        let run_bg = config.borrow().settings.run_in_background;
+        let config = config.clone();
+        switch_row(
+            &settings_body,
+            "Beim Schließen im Hintergrund weiterlaufen",
+            run_bg,
+            move |on| {
+                let mut cfg = config.borrow_mut();
+                cfg.settings.run_in_background = on;
+                let _ = cfg.save(&Config::default_path());
+            },
+        );
     }
 
     let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
@@ -226,6 +253,29 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     test_row.append(&test_btn);
     settings_body.append(&test_row);
 
+    let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+    sep.add_css_class("row-sep");
+    settings_body.append(&sep);
+    let quit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    quit_row.add_css_class("folder-row");
+    let quit_label = gtk::Label::new(Some("Beenden"));
+    quit_label.add_css_class("row-label");
+    quit_label.set_halign(gtk::Align::Start);
+    quit_label.set_hexpand(true);
+    let quit_btn = gtk::Button::with_label("App beenden");
+    quit_btn.set_valign(gtk::Align::Center);
+    {
+        let window = window.clone();
+        quit_btn.connect_clicked(move |_| {
+            if let Some(app) = window.application() {
+                app.quit();
+            }
+        });
+    }
+    quit_row.append(&quit_label);
+    quit_row.append(&quit_btn);
+    settings_body.append(&quit_row);
+
     revealer.set_child(Some(&settings_body));
     settings_card.append(&revealer);
     let rev = revealer.clone();
@@ -251,10 +301,7 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     target.set_valign(gtk::Align::Start);
     let (t_name, t_sub_text) = match &config.borrow().target {
         Target::Local { path } => ("Lokales Ziel", path.to_string_lossy().to_string()),
-        Target::Webdav { url, user } => (
-            "Hetzner Storage Box (WebDAV)",
-            format!("{} · Benutzer {}", url, user),
-        ),
+        Target::Webdav { url, user } => ("WebDAV", format!("{} · Benutzer {}", url, user)),
     };
     let t_title = gtk::Label::new(Some(t_name));
     t_title.add_css_class("target-title");
@@ -324,7 +371,53 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
         trigger_sync(&config, &ui, &state_path);
     }
 
+    {
+        let config = config.clone();
+        let ui = ui.clone();
+        let state_path = state_path.clone();
+        let last = Rc::new(std::cell::Cell::new(0i64));
+        glib::timeout_add_local(Duration::from_secs(30), move || {
+            let (auto, interval_min) = {
+                let cfg = config.borrow();
+                (
+                    cfg.settings.auto_sync,
+                    cfg.settings.sync_interval_minutes.max(1),
+                )
+            };
+            if !auto || !ui.btn.is_sensitive() {
+                return glib::ControlFlow::Continue;
+            }
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if now - last.get() >= (interval_min * 60) as i64 {
+                last.set(now);
+                trigger_sync(&config, &ui, &state_path);
+            }
+            glib::ControlFlow::Continue
+        });
+    }
+
     scrolled.upcast()
+}
+
+fn switch_row(body: &gtk::Box, name: &str, active: bool, on_toggle: impl Fn(bool) + 'static) {
+    let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+    sep.add_css_class("row-sep");
+    body.append(&sep);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.add_css_class("folder-row");
+    let label = gtk::Label::new(Some(name));
+    label.add_css_class("row-label");
+    label.set_halign(gtk::Align::Start);
+    label.set_hexpand(true);
+    let sw = gtk::Switch::new();
+    sw.set_active(active);
+    sw.connect_active_notify(move |s| on_toggle(s.is_active()));
+    row.append(&label);
+    row.append(&sw);
+    body.append(&row);
 }
 
 fn append_folder_row(list: &gtk::Box, config: &Rc<RefCell<Config>>, path: &Path) {
