@@ -130,3 +130,190 @@ fn legacy_single_target_config_still_loads() {
         }
     );
 }
+
+#[test]
+fn unavailable_or_deselected_sources_preserve_both_backups_after_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir_all(src.join("nested")).unwrap();
+    fs::write(src.join("save.txt"), b"save data").unwrap();
+    fs::write(src.join("nested/ümlaut.txt"), b"unicode data").unwrap();
+    let mut cfg = make_config(&src, &tmp.path().join("target1"));
+    cfg.targets.push(Target::Local {
+        path: tmp.path().join("target2"),
+    });
+    let state_path = tmp.path().join("state.db");
+    assert!(sync(&cfg, &state_path).unwrap().errors.is_empty());
+    // Every sync reopens the persisted state, as a fresh process would.
+    fs::rename(&src, tmp.path().join("unavailable")).unwrap();
+    let report = sync(&cfg, &state_path).unwrap();
+    assert!(!report.errors.is_empty());
+    assert_eq!(report.deleted, 0);
+    cfg.folders.clear();
+    let report = sync(&cfg, &state_path).unwrap();
+    assert!(report.errors.is_empty());
+    assert_eq!(report.deleted, 0);
+    for target in &cfg.targets {
+        let Target::Local { path } = target else {
+            unreachable!()
+        };
+        assert_eq!(
+            fs::read(path.join("Documents/save.txt")).unwrap(),
+            b"save data"
+        );
+        assert_eq!(
+            fs::read(path.join("Documents/nested/ümlaut.txt")).unwrap(),
+            b"unicode data"
+        );
+    }
+    assert_eq!(State::open(&state_path).unwrap().count().unwrap(), 4);
+    // Re-enabling the source restores ordinary delete mirroring.
+    fs::rename(tmp.path().join("unavailable"), &src).unwrap();
+    cfg.folders.push(src.clone());
+    fs::remove_file(src.join("save.txt")).unwrap();
+    assert_eq!(sync(&cfg, &state_path).unwrap().deleted, 2);
+}
+
+#[test]
+fn connection_test_preserves_existing_files_and_cleans_up() {
+    use cloudsave_core::{Backend, LocalBackend};
+    let tmp = tempfile::tempdir().unwrap();
+    let sentinel = tmp.path().join(".cloudsave-test");
+    fs::write(&sentinel, b"PREEXISTING USER DATA - KEEP ME").unwrap();
+    let backend = LocalBackend::new(tmp.path()).unwrap();
+    for _ in 0..3 {
+        backend.test_connection().unwrap();
+        assert_eq!(
+            fs::read(&sentinel).unwrap(),
+            b"PREEXISTING USER DATA - KEEP ME"
+        );
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+}
+
+#[test]
+fn no_targets_is_an_error_but_an_empty_source_is_valid() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("empty");
+    fs::create_dir(&src).unwrap();
+    let mut cfg = make_config(&src, &tmp.path().join("target"));
+    assert!(sync(&cfg, &tmp.path().join("state.db"))
+        .unwrap()
+        .errors
+        .is_empty());
+    cfg.targets.clear();
+    let report = sync(&cfg, &tmp.path().join("state.db")).unwrap();
+    assert!(report.errors.iter().any(|e| e.contains("Kein Endpunkt")));
+}
+
+#[cfg(unix)]
+#[test]
+fn incomplete_scan_preserves_backups_but_complete_scans_still_mirror_deletes() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    let hidden = src.join("private");
+    let dst = tmp.path().join("target");
+    let state_path = tmp.path().join("state.db");
+    fs::create_dir_all(&hidden).unwrap();
+    fs::write(hidden.join("save.txt"), b"keep me").unwrap();
+    fs::write(
+        src.join("deleted.txt"),
+        b"mirror only after a complete scan",
+    )
+    .unwrap();
+    let cfg = make_config(&src, &dst);
+    assert_eq!(sync(&cfg, &state_path).unwrap().uploaded, 2);
+    fs::remove_file(src.join("deleted.txt")).unwrap();
+    fs::set_permissions(&hidden, fs::Permissions::from_mode(0o000)).unwrap();
+    // A privileged test runner can bypass permissions. Run this test as a normal user.
+    if fs::read_dir(&hidden).is_ok() {
+        fs::set_permissions(&hidden, fs::Permissions::from_mode(0o700)).unwrap();
+        eprintln!("permission regression requires an unprivileged runner");
+        return;
+    }
+    let report = sync(&cfg, &state_path).unwrap();
+    fs::set_permissions(&hidden, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(report.errors.iter().any(|e| e.contains("private")));
+    assert_eq!(report.deleted, 0);
+    assert_eq!(
+        fs::read(dst.join("Documents/private/save.txt")).unwrap(),
+        b"keep me"
+    );
+    assert!(dst.join("Documents/deleted.txt").exists());
+    let report = sync(&cfg, &state_path).unwrap();
+    assert!(report.errors.is_empty());
+    assert_eq!(report.deleted, 1);
+}
+
+#[test]
+fn target_write_errors_identify_source_and_destination() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    let dst = tmp.path().join("target");
+    fs::create_dir(&src).unwrap();
+    fs::create_dir(&dst).unwrap();
+    fs::write(src.join("save.txt"), b"data").unwrap();
+    // A file blocks creation of the target's source directory.
+    fs::write(dst.join("Documents"), b"obstruction").unwrap();
+    let report = sync(&make_config(&src, &dst), &tmp.path().join("state.db")).unwrap();
+    assert_eq!(report.uploaded, 0);
+    assert!(report
+        .errors
+        .iter()
+        .any(|e| e.contains(&src.display().to_string())
+            && e.contains(&dst.display().to_string())
+            && e.contains("save.txt")));
+}
+
+#[test]
+fn different_source_with_same_name_cannot_claim_old_backups() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("first/Documents");
+    let replacement = tmp.path().join("second/Documents");
+    let dst = tmp.path().join("target");
+    let state_path = tmp.path().join("state.db");
+    fs::create_dir_all(&src).unwrap();
+    fs::create_dir_all(&replacement).unwrap();
+    fs::write(src.join("save.txt"), b"original").unwrap();
+    let mut cfg = make_config(&src, &dst);
+    sync(&cfg, &state_path).unwrap();
+    cfg.folders = vec![replacement.clone()];
+    assert_eq!(sync(&cfg, &state_path).unwrap().deleted, 0);
+    fs::write(replacement.join("save.txt"), b"replacement").unwrap();
+    assert!(!sync(&cfg, &state_path).unwrap().errors.is_empty());
+    assert_eq!(
+        fs::read(dst.join("Documents/save.txt")).unwrap(),
+        b"original"
+    );
+    cfg.folders.push(src);
+    assert!(!sync(&cfg, &state_path).unwrap().errors.is_empty());
+    assert_eq!(
+        fs::read(dst.join("Documents/save.txt")).unwrap(),
+        b"original"
+    );
+}
+
+#[test]
+fn legacy_state_migration_keeps_unknown_backups_and_learns_observed_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    let dst = tmp.path().join("target");
+    let state_path = tmp.path().join("state.db");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("save.txt"), b"original").unwrap();
+    let cfg = make_config(&src, &dst);
+    sync(&cfg, &state_path).unwrap();
+    // Recreate the old schema: persisted backups have no recorded owner yet.
+    rusqlite::Connection::open(&state_path)
+        .unwrap()
+        .execute("DROP TABLE file_sources", [])
+        .unwrap();
+    fs::rename(&src, tmp.path().join("unavailable")).unwrap();
+    assert_eq!(sync(&cfg, &state_path).unwrap().deleted, 0);
+    assert!(dst.join("Documents/save.txt").exists());
+    fs::rename(tmp.path().join("unavailable"), &src).unwrap();
+    assert_eq!(sync(&cfg, &state_path).unwrap().skipped, 1);
+    fs::remove_file(src.join("save.txt")).unwrap();
+    assert_eq!(sync(&cfg, &state_path).unwrap().deleted, 1);
+}

@@ -13,6 +13,29 @@ pub struct WebdavBackend {
     password: String,
 }
 
+/// Syntax validation for the HTTPS endpoint offered by the setup UI; no network access.
+pub fn validate_webdav_url(value: &str) -> Result<()> {
+    let value = value.trim();
+    let url = reqwest::Url::parse(value).map_err(|_| {
+        Error("Bitte eine gültige HTTPS-URL eingeben, z. B. https://cloud.example.com".into())
+    })?;
+    if url.scheme() != "https" || url.host_str().is_none() {
+        return Err(Error(
+            "WebDAV benötigt eine HTTPS-URL mit Servernamen.".into(),
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(Error(
+            "Server-URL ohne Zugangsdaten, Abfrage oder Fragment eingeben.".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn url_encode_segment(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -139,6 +162,36 @@ impl Backend for WebdavBackend {
             Ok(())
         } else {
             Err(io::Error::other(format!("DELETE {} -> HTTP {}", url, st)))
+        }
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::validate_webdav_url;
+
+    #[test]
+    fn setup_accepts_only_valid_https_endpoints() {
+        for value in [
+            "",
+            "  ",
+            "not a url",
+            "https://",
+            "http://example.com",
+            "ftp://example.com",
+            "file:///tmp",
+            "https://user:password@example.com",
+            "https://example.com/#fragment",
+        ] {
+            assert!(validate_webdav_url(value).is_err(), "{value:?}");
+        }
+        for value in [
+            "https://example.com",
+            " https://example.com/dav/ ",
+            "https://example.com:8443/dav",
+            "https://[::1]/dav",
+        ] {
+            assert!(validate_webdav_url(value).is_ok(), "{value:?}");
         }
     }
 }

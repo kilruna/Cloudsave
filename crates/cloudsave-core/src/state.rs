@@ -38,6 +38,15 @@ impl State {
             )",
             [],
         )?;
+        // Keep source ownership across restarts and changes to the selected folders.
+        // Legacy rows without ownership are retained until observed in a new scan.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_sources (
+                path TEXT PRIMARY KEY,
+                source TEXT NOT NULL
+            )",
+            [],
+        )?;
         Ok(State { conn })
     }
 
@@ -70,8 +79,31 @@ impl State {
 
     pub fn remove(&self, path: &str) -> Result<()> {
         self.conn
+            .execute("DELETE FROM file_sources WHERE path = ?1", params![path])?;
+        self.conn
             .execute("DELETE FROM files WHERE path = ?1", params![path])?;
         Ok(())
+    }
+
+    pub(crate) fn set_source(&self, path: &str, source: &Path) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO file_sources (path, source) VALUES (?1, ?2)",
+            params![path, source.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn source(&self, path: &str) -> Result<Option<std::path::PathBuf>> {
+        let result = self.conn.query_row(
+            "SELECT source FROM file_sources WHERE path = ?1",
+            params![path],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(source) => Ok(Some(source.into())),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn count(&self) -> Result<i64> {

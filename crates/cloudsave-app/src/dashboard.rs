@@ -60,6 +60,9 @@ pub fn build(
     let status_sub = gtk::Label::new(Some("Noch kein Sync durchgeführt"));
     status_sub.add_css_class("sync-sub");
     status_sub.set_halign(gtk::Align::Start);
+    status_sub.set_xalign(0.0);
+    status_sub.set_wrap(true);
+    status_sub.set_selectable(true);
     status_sub.set_margin_top(6);
     page.append(&status_sub);
 
@@ -395,12 +398,12 @@ pub fn build(
         progress: progress.clone(),
         btn: sync_btn.clone(),
     };
-    if let Ok(state) = State::open(&state_path) {
-        if state.count().unwrap_or(0) > 0 {
-            ui.title.set_text("Alles synchronisiert");
-            ui.progress.set_fraction(1.0);
-        }
-        ui.sub.set_text(&status_sub_text(&state_path));
+    ui.sub.set_text(&status_sub_text(&state_path));
+    if config.borrow().targets.is_empty() {
+        ui.title.set_text("Endpunkt einrichten");
+        ui.sub
+            .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
+        ui.btn.set_sensitive(false);
     }
     {
         let config = config.clone();
@@ -518,6 +521,14 @@ fn status_sub_text(state_path: &Path) -> String {
 }
 
 fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
+    if config.borrow().targets.is_empty() {
+        ui.title.set_text("Endpunkt einrichten");
+        ui.sub
+            .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
+        ui.progress.set_fraction(0.0);
+        ui.btn.set_sensitive(false);
+        return;
+    }
     ui.btn.set_sensitive(false);
     ui.title.set_text("Sync läuft");
     ui.sub.set_text("Dateien werden abgeglichen …");
@@ -537,18 +548,25 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         Ok(Ok(report)) => {
             if report.errors.is_empty() {
                 ui.title.set_text("Alles synchronisiert");
+                ui.sub.set_text(&status_sub_text(&state_path));
+                ui.progress.set_fraction(1.0);
             } else {
                 ui.title
                     .set_text(&format!("Sync mit {} Fehler(n)", report.errors.len()));
+                ui.sub.set_text(&format!(
+                    "{}\n{}\nMit „Jetzt synchronisieren“ erneut versuchen.",
+                    status_sub_text(&state_path),
+                    report.errors.join("\n")
+                ));
+                ui.progress.set_fraction(0.0);
             }
-            ui.sub.set_text(&status_sub_text(&state_path));
-            ui.progress.set_fraction(1.0);
             ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }
         Ok(Err(e)) => {
             ui.title.set_text("Sync fehlgeschlagen");
             ui.sub.set_text(&e);
+            ui.progress.set_fraction(0.0);
             ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }
@@ -558,6 +576,9 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         }
         Err(mpsc::TryRecvError::Disconnected) => {
             ui.title.set_text("Sync abgebrochen");
+            ui.sub
+                .set_text("Mit „Jetzt synchronisieren“ erneut versuchen.");
+            ui.progress.set_fraction(0.0);
             ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }
