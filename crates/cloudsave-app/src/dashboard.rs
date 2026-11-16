@@ -9,7 +9,7 @@ use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-use cloudsave_core::{Config, State, SyncReport, Target};
+use cloudsave_core::{Config, State, SyncMode, SyncReport, Target};
 
 use crate::{icon, Icon};
 
@@ -186,6 +186,47 @@ pub fn build(
     interval_row.append(&interval_label);
     interval_row.append(&interval_spin);
     settings_body.append(&interval_row);
+
+    let mode_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    mode_box.add_css_class("folder-row");
+    let mode_label = gtk::Label::new(Some("Sicherungsmodus"));
+    mode_label.set_xalign(0.0);
+    mode_label.add_css_class("row-label");
+    mode_box.append(&mode_label);
+    let mode =
+        gtk::DropDown::from_strings(&["Backup (keine Löschungen)", "Spiegelung (mit Löschungen)"]);
+    mode.set_selected(if config.borrow().settings.sync_mode == SyncMode::Backup {
+        0
+    } else {
+        1
+    });
+    mode_box.append(&mode);
+    let mode_hint = gtk::Label::new(Some(
+        "Bei Spiegelung werden lokal gelöschte Dateien auch aus den Sicherungen entfernt.",
+    ));
+    mode_hint.set_wrap(true);
+    mode_hint.set_xalign(0.0);
+    mode_hint.add_css_class("dim-label");
+    mode_box.append(&mode_hint);
+    {
+        let config = config.clone();
+        let reverting = Rc::new(std::cell::Cell::new(false));
+        mode.connect_selected_notify(move |dropdown| {
+            if reverting.get() { return; }
+            let mut next = config.borrow().clone();
+            next.settings.sync_mode = if dropdown.selected() == 0 { SyncMode::Backup } else { SyncMode::Mirror };
+            match next.save(&Config::default_path()) {
+                Ok(()) => { *config.borrow_mut() = next; mode_hint.set_text("Bei Spiegelung werden lokal gelöschte Dateien auch aus den Sicherungen entfernt."); }
+                Err(error) => {
+                    mode_hint.set_text(&format!("Modus nicht gespeichert: {error}"));
+                    reverting.set(true);
+                    dropdown.set_selected(if config.borrow().settings.sync_mode == SyncMode::Backup { 0 } else { 1 });
+                    reverting.set(false);
+                }
+            }
+        });
+    }
+    settings_body.append(&mode_box);
 
     {
         let autostart = config.borrow().settings.autostart;

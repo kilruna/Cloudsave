@@ -19,8 +19,15 @@ struct ConfigCompat {
     target: Option<Target>,
     #[serde(default)]
     targets: Vec<Target>,
-    #[serde(default)]
+    #[serde(default = "legacy_settings")]
     settings: Settings,
+}
+
+fn legacy_settings() -> Settings {
+    Settings {
+        sync_mode: SyncMode::Mirror,
+        ..Settings::default()
+    }
 }
 
 impl From<ConfigCompat> for Config {
@@ -48,6 +55,8 @@ pub enum Target {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default = "legacy_sync_mode")]
+    pub sync_mode: SyncMode,
     #[serde(default = "default_true")]
     pub auto_sync: bool,
     #[serde(default)]
@@ -56,6 +65,18 @@ pub struct Settings {
     pub run_in_background: bool,
     #[serde(default = "default_interval")]
     pub sync_interval_minutes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncMode {
+    Backup,
+    Mirror,
+}
+
+// Existing profiles keep their documented behavior. New setups choose the safe backup default.
+fn legacy_sync_mode() -> SyncMode {
+    SyncMode::Mirror
 }
 
 fn default_true() -> bool {
@@ -69,6 +90,7 @@ fn default_interval() -> u64 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            sync_mode: SyncMode::Backup,
             auto_sync: default_true(),
             autostart: false,
             run_in_background: default_true(),

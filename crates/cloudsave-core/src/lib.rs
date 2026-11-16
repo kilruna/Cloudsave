@@ -8,7 +8,7 @@ mod webdav;
 
 pub use autostart::{autostart_enabled, set_autostart};
 pub use backend::{backend_for, Backend, LocalBackend};
-pub use config::{Config, Settings, Target};
+pub use config::{Config, Settings, SyncMode, Target};
 pub use engine::{sync, target_label, SyncReport};
 pub use secrets::{load_password, save_password};
 pub use state::State;

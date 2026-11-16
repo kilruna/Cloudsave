@@ -3,7 +3,7 @@
 Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 
 - [x] Zugangsdaten im System-Schlüsselbund (Secret Service, GNOME Keyring/KWallet); bestehende Passwortdateien werden erst nach erfolgreicher Übernahme entfernt. Einrichtung zeigt Fehler an und speichert im Hintergrund.
-- [ ] Wählbarer Backup-Modus ohne Löschweitergabe.
+- [x] Wählbarer Backup-Modus ohne Löschweitergabe. Neue Profile starten im Backup-Modus; vorhandene Profile behalten die bisherige Spiegelung. Der Modus ist im Dashboard umstellbar.
 - [ ] Abbruchsichere Uploads über temporäre Dateien und anschließendes Umbenennen.
 - [ ] Ausschlussmuster für nicht zu sichernde Dateien und Ordner.
 - [ ] Ereignisbasierte Änderungserkennung mit Bündelung und Scan-Fallback.
