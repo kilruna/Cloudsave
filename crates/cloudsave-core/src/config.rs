@@ -4,14 +4,42 @@ use std::path::{Path, PathBuf};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "ConfigCompat")]
 pub struct Config {
     pub folders: Vec<PathBuf>,
-    pub target: Target,
+    pub targets: Vec<Target>,
     #[serde(default)]
     pub settings: Settings,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Deserialize)]
+struct ConfigCompat {
+    folders: Vec<PathBuf>,
+    #[serde(default)]
+    target: Option<Target>,
+    #[serde(default)]
+    targets: Vec<Target>,
+    #[serde(default)]
+    settings: Settings,
+}
+
+impl From<ConfigCompat> for Config {
+    fn from(c: ConfigCompat) -> Self {
+        let mut targets = c.targets;
+        if let Some(t) = c.target {
+            if !targets.contains(&t) {
+                targets.insert(0, t);
+            }
+        }
+        Self {
+            folders: c.folders,
+            targets,
+            settings: c.settings,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Target {
     Local { path: PathBuf },

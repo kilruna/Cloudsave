@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::backend::{backend_for, Backend};
-use crate::config::Config;
+use crate::config::{Config, Target};
 use crate::state::State;
 use crate::Result;
 
@@ -25,8 +25,19 @@ fn mtime_secs(meta: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
+fn target_prefix(target: &Target) -> Result<String> {
+    let s = toml::to_string(target).map_err(|e| crate::Error(e.to_string()))?;
+    Ok(blake3::hash(s.as_bytes()).to_hex()[..16].to_string())
+}
+
+pub fn target_label(target: &Target) -> String {
+    match target {
+        Target::Local { path } => format!("Lokal: {}", path.display()),
+        Target::Webdav { url, user } => format!("WebDAV: {} ({})", url, user),
+    }
+}
+
 pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
-    let backend = backend_for(&config.target)?;
     let mut state = State::open(state_path)?;
     let mut report = SyncReport::default();
 
@@ -64,30 +75,52 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
         }
     }
 
-    for (key, (abs, size, mtime)) in &scanned {
-        let unchanged = match state.get(key)? {
-            Some(entry) => entry.size == *size && entry.mtime == *mtime,
-            None => false,
+    for target in &config.targets {
+        let backend = match backend_for(target) {
+            Ok(b) => b,
+            Err(e) => {
+                report
+                    .errors
+                    .push(format!("{}: {}", target_label(target), e));
+                continue;
+            }
         };
-        if unchanged {
-            report.skipped += 1;
-            continue;
+        let prefix = target_prefix(target)?;
+        for (key, (abs, size, mtime)) in &scanned {
+            let skey = format!("{}::{}", prefix, key);
+            let unchanged = match state.get(&skey)? {
+                Some(entry) => entry.size == *size && entry.mtime == *mtime,
+                None => false,
+            };
+            if unchanged {
+                report.skipped += 1;
+                continue;
+            }
+            match upload_one(
+                &*backend,
+                &mut state,
+                &mut report,
+                &skey,
+                Path::new(key),
+                &(abs.clone(), *size, *mtime),
+            ) {
+                Ok(()) => {}
+                Err(e) => report.errors.push(format!("{}: {}", skey, e)),
+            }
         }
-        match upload_one(&*backend, key, abs, *size, *mtime, &mut state, &mut report) {
-            Ok(()) => {}
-            Err(e) => report.errors.push(format!("{}: {}", key, e)),
-        }
-    }
 
-    let known = state.all_paths()?;
-    for key in known {
-        if !scanned.contains_key(&key) {
-            match backend.delete(Path::new(&key)) {
-                Ok(()) => {
-                    state.remove(&key)?;
-                    report.deleted += 1;
+        let p = format!("{}::", prefix);
+        for key in state.all_paths()? {
+            if let Some(rel) = key.strip_prefix(&p) {
+                if !scanned.contains_key(rel) {
+                    match backend.delete(Path::new(rel)) {
+                        Ok(()) => {
+                            state.remove(&key)?;
+                            report.deleted += 1;
+                        }
+                        Err(e) => report.errors.push(format!("löschen {}: {}", key, e)),
+                    }
                 }
-                Err(e) => report.errors.push(format!("löschen {}: {}", key, e)),
             }
         }
     }
@@ -97,24 +130,23 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
 
 fn upload_one(
     backend: &dyn Backend,
-    key: &str,
-    abs: &Path,
-    size: i64,
-    mtime: i64,
     state: &mut State,
     report: &mut SyncReport,
+    state_key: &str,
+    rel: &Path,
+    file: &(PathBuf, i64, i64),
 ) -> Result<()> {
-    let rel = Path::new(key);
+    let (abs, size, mtime) = (file.0.clone(), file.1, file.2);
     backend.mkdirs(rel)?;
     let mut hasher = blake3::Hasher::new();
     {
-        let mut f = fs::File::open(abs)?;
+        let mut f = fs::File::open(&abs)?;
         std::io::copy(&mut f, &mut hasher)?;
     }
     let hash = hasher.finalize().to_hex().to_string();
-    let file = fs::File::open(abs)?;
-    let written = backend.put(rel, file, size as u64)?;
-    state.upsert(key, size, mtime, &hash)?;
+    let f = fs::File::open(&abs)?;
+    let written = backend.put(rel, f, size as u64)?;
+    state.upsert(state_key, size, mtime, &hash)?;
     report.uploaded += 1;
     report.bytes += written;
     Ok(())

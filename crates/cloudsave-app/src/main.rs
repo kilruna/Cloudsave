@@ -11,7 +11,7 @@ const CSS: &str = r#"
 @define-color accent_bg_color #9D7CFF;
 @define-color accent_fg_color #FFFFFF;
 
-.window-bg {
+window, .window-bg {
     background: linear-gradient(150deg, #3E7BDB 0%, #1E56B0 38%, #24338D 100%);
 }
 
@@ -225,7 +225,11 @@ fn build_ui(app: &adw::Application) {
     let window = gtk::ApplicationWindow::new(app);
     window.set_title(Some("Cloudsave"));
     window.set_default_size(1120, 760);
-    window.set_decorated(false);
+    window.set_decorated(true);
+    let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
+    header.set_title_widget(Some(&adw::WindowTitle::new("Cloudsave", "")));
+    window.set_titlebar(Some(&header));
 
     {
         let window = window.clone();
@@ -261,7 +265,7 @@ fn build_ui(app: &adw::Application) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) => {
-            let page = dashboard::build(window.upcast_ref(), &config, true);
+            let page = dashboard::build(window.upcast_ref(), &nav, &config, true);
             nav.push(&adw::NavigationPage::new(&page, "Übersicht"));
         }
         Err(_) => {
