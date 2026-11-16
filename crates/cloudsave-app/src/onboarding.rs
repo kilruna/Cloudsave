@@ -142,9 +142,7 @@ fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
         ("Schreibtisch", "Schreibtisch", false),
     ] {
         let path = home.join(dir);
-        if path.is_dir() {
-            add_folder_row(&group, &checks, &next, path, label, active);
-        }
+        add_folder_row(&group, &checks, &next, path, label, active);
     }
     next.set_sensitive(checks.borrow().iter().any(|(_, c)| c.is_active()));
 
