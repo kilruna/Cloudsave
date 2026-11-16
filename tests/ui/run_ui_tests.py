@@ -518,7 +518,9 @@ def automatic_changes():
     try:
         ui.launch();ui.idle()
         ready=eventually(lambda:any('Änderungen werden automatisch erkannt' in label for label in ui.labels()))
-        (source/'save.txt').write_text('automatically propagated, longer version')
+        original=(source/'save.txt').stat()
+        (source/'save.txt').write_text('QA-SAVE-v2\n')
+        os.utime(source/'save.txt',ns=(original.st_atime_ns,original.st_mtime_ns+1))
         propagated=eventually(lambda:all((target/'Documents/save.txt').exists() and (target/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() for target in targets),12)
         ui.idle();ui.set_active('GtkSwitch',False)
         previous=(targets[0]/'Documents/save.txt').read_bytes()
