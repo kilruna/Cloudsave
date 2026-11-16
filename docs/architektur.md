@@ -25,7 +25,7 @@ Ein separater D-Bus-Daemon, rsync/SFTP/S3 und genauer Transferfortschritt sind g
 
 ---
 
-# Architektur
+## Architekturentwurf
 
 ## Komponenten-Übersicht
 
