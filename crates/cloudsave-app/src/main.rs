@@ -265,7 +265,12 @@ fn build_ui(app: &adw::Application) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) => {
-            let page = dashboard::build(window.upcast_ref(), &nav, &config, true);
+            let page = dashboard::build(
+                window.upcast_ref(),
+                &nav,
+                &config,
+                config.settings.auto_sync,
+            );
             nav.push(&adw::NavigationPage::new(&page, "Übersicht"));
         }
         Err(_) => {

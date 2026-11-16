@@ -12,7 +12,7 @@ pub use config::{Config, Settings, Target};
 pub use engine::{sync, target_label, SyncReport};
 pub use secrets::{load_password, save_password};
 pub use state::State;
-pub use webdav::WebdavBackend;
+pub use webdav::{validate_webdav_url, WebdavBackend};
 
 #[derive(Debug)]
 pub struct Error(pub String);

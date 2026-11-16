@@ -24,6 +24,9 @@ fn shell(
 ) -> adw::NavigationPage {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
+    // The application titlebar owns window controls; retain page title/back navigation.
+    header.set_show_start_title_buttons(false);
+    header.set_show_end_title_buttons(false);
     let label = gtk::Label::new(Some(title));
     label.add_css_class("title-4");
     header.set_title_widget(Some(&label));
@@ -232,6 +235,9 @@ fn target_picker(
     radio_local.set_valign(gtk::Align::Center);
     row_local.set_activatable_widget(Some(&radio_local));
     row_local.add_suffix(&radio_local);
+    let select_local = gtk::Button::with_label("Ordner auswählen …");
+    select_local.set_valign(gtk::Align::Center);
+    row_local.add_suffix(&select_local);
     group.add(&row_local);
 
     let row_webdav = adw::ActionRow::builder()
@@ -281,6 +287,11 @@ fn target_picker(
     form.add(&pw_entry);
     form.add(&test_row);
     form.add(&status_row);
+    let url_error = gtk::Label::new(None);
+    url_error.set_wrap(true);
+    url_error.set_xalign(0.0);
+    url_error.add_css_class("error");
+    form.add(&url_error);
 
     {
         let form = form.clone();
@@ -289,26 +300,45 @@ fn target_picker(
         });
     }
 
+    let local_path: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+    {
+        let local_path = local_path.clone();
+        let choice = choice.clone();
+        let next = next.clone();
+        radio_local.connect_toggled(move |c| {
+            if c.is_active() {
+                *choice.borrow_mut() = local_path.borrow().clone().map(TargetChoice::Local);
+                next.set_sensitive(choice.borrow().is_some());
+            }
+        });
+    }
     {
         let window = window.clone();
         let choice = choice.clone();
         let next = next.clone();
         let row_local = row_local.clone();
-        radio_local.connect_toggled(move |c| {
-            if !c.is_active() {
-                return;
-            }
+        let radio_local = radio_local.clone();
+        select_local.connect_clicked(move |button| {
+            radio_local.set_active(true);
+            button.set_sensitive(false);
             let dialog = gtk::FileDialog::new();
             let choice = choice.clone();
             let next = next.clone();
             let row_local = row_local.clone();
+            let local_path = local_path.clone();
+            let radio_local = radio_local.clone();
+            let button = button.clone();
             dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
+                button.set_sensitive(true);
                 if let Ok(file) = res {
                     if let Some(path) = file.path() {
                         let subtitle = path.to_string_lossy().to_string();
                         row_local.set_subtitle(&subtitle);
-                        *choice.borrow_mut() = Some(TargetChoice::Local(path));
-                        next.set_sensitive(true);
+                        *local_path.borrow_mut() = Some(path.clone());
+                        if radio_local.is_active() {
+                            *choice.borrow_mut() = Some(TargetChoice::Local(path));
+                            next.set_sensitive(true);
+                        }
                     }
                 }
             });
@@ -323,6 +353,8 @@ fn target_picker(
             let user_entry = user_entry.clone();
             let url_entry = url_entry.clone();
             let pw_entry = pw_entry.clone();
+            let url_error = url_error.clone();
+            let test_btn = test_btn.clone();
             Rc::new(move || {
                 if !radio_webdav.is_active() {
                     return;
@@ -330,7 +362,16 @@ fn target_picker(
                 let user = user_entry.text().trim().to_string();
                 let url = url_entry.text().trim().to_string();
                 let password = pw_entry.text().to_string();
-                let valid = !user.is_empty() && !url.is_empty() && !password.is_empty();
+                let validation = cloudsave_core::validate_webdav_url(&url);
+                url_error.set_text(
+                    validation
+                        .as_ref()
+                        .err()
+                        .map(|e| e.0.as_str())
+                        .unwrap_or(""),
+                );
+                let valid = !user.is_empty() && validation.is_ok() && !password.is_empty();
+                test_btn.set_sensitive(valid);
                 *choice.borrow_mut() = if valid {
                     Some(TargetChoice::Webdav {
                         url,
@@ -350,14 +391,9 @@ fn target_picker(
         let u = update.clone();
         pw_entry.connect_changed(move |_| u());
         let u = update.clone();
-        let choice = choice.clone();
-        let next = next.clone();
         radio_webdav.connect_toggled(move |c| {
             if c.is_active() {
                 u();
-            } else {
-                *choice.borrow_mut() = None;
-                next.set_sensitive(false);
             }
         });
     }
@@ -368,7 +404,7 @@ fn target_picker(
         let pw_entry = pw_entry.clone();
         let status_label = status_label.clone();
         test_btn.connect_clicked(move |_| {
-            let url = url_entry.text().to_string();
+            let url = url_entry.text().trim().to_string();
             let user = user_entry.text().to_string();
             let password = pw_entry.text().to_string();
             status_label.set_text("Teste …");

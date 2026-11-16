@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::config::Target;
@@ -26,9 +26,13 @@ impl LocalBackend {
 
 impl Backend for LocalBackend {
     fn test_connection(&self) -> io::Result<()> {
-        let tmp = self.root.join(".cloudsave-test");
-        fs::write(&tmp, b"ok")?;
-        fs::remove_file(&tmp)?;
+        // NamedTempFile exclusively creates a random path and cleans up on errors too.
+        let mut tmp = tempfile::Builder::new()
+            .prefix(".cloudsave-test-")
+            .tempfile_in(&self.root)?;
+        tmp.write_all(b"ok")?;
+        tmp.as_file().sync_all()?;
+        tmp.close()?;
         Ok(())
     }
 

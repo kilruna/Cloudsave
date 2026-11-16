@@ -153,3 +153,38 @@ fn webdav_backend_roundtrip_via_mock_server() {
     let backend = backend_for(&cfg.targets[0]).unwrap();
     backend.test_connection().unwrap();
 }
+
+#[test]
+fn authentication_failure_is_reported_with_target_and_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("save.txt"), b"synthetic data").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/dav", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 8192];
+        assert!(stream.read(&mut request).unwrap() > 0);
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+    });
+    let cfg = Config {
+        folders: vec![src.clone()],
+        targets: vec![Target::Webdav {
+            url: url.clone(),
+            user: "qa-user".into(),
+        }],
+        settings: Settings::default(),
+    };
+    let report = sync(&cfg, &tmp.path().join("state.db")).unwrap();
+    server.join().unwrap();
+    assert_eq!(report.uploaded, 0);
+    assert!(report
+        .errors
+        .iter()
+        .any(|e| e.contains("401") && e.contains(&url) && e.contains(&src.display().to_string())));
+}
