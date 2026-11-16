@@ -4,7 +4,7 @@ use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::thread;
 
-use cloudsave_core::{backend_for, sync, Config, Settings, Target};
+use cloudsave_core::{backend_for, sync, Config, Settings, SyncMode, Target};
 
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
@@ -122,7 +122,10 @@ fn webdav_backend_roundtrip_via_mock_server() {
             url: format!("http://127.0.0.1:{}/base", port),
             user: "u1".to_string(),
         }],
-        settings: Settings::default(),
+        settings: Settings {
+            sync_mode: SyncMode::Mirror,
+            ..Settings::default()
+        },
     };
 
     let r = sync(&cfg, &state_path).unwrap();
@@ -179,7 +182,10 @@ fn authentication_failure_is_reported_with_target_and_source() {
             url: url.clone(),
             user: "qa-user".into(),
         }],
-        settings: Settings::default(),
+        settings: Settings {
+            sync_mode: SyncMode::Mirror,
+            ..Settings::default()
+        },
     };
     let report = sync(&cfg, &tmp.path().join("state.db")).unwrap();
     server.join().unwrap();

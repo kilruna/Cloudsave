@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use cloudsave_core::{sync, Config, Settings, State, SyncReport, Target};
+use cloudsave_core::{sync, Config, Settings, State, SyncMode, SyncReport, Target};
 
 fn make_config(src: &Path, dst: &Path) -> Config {
     Config {
@@ -9,7 +9,10 @@ fn make_config(src: &Path, dst: &Path) -> Config {
         targets: vec![Target::Local {
             path: dst.to_path_buf(),
         }],
-        settings: Settings::default(),
+        settings: Settings {
+            sync_mode: SyncMode::Mirror,
+            ..Settings::default()
+        },
     }
 }
 
@@ -93,7 +96,10 @@ fn multi_target_sync_reaches_all_targets() {
             Target::Local { path: dst1.clone() },
             Target::Local { path: dst2.clone() },
         ],
-        settings: Settings::default(),
+        settings: Settings {
+            sync_mode: SyncMode::Mirror,
+            ..Settings::default()
+        },
     };
 
     let r = sync(&cfg, &state_path).unwrap();
@@ -316,4 +322,55 @@ fn legacy_state_migration_keeps_unknown_backups_and_learns_observed_sources() {
     assert_eq!(sync(&cfg, &state_path).unwrap().skipped, 1);
     fs::remove_file(src.join("save.txt")).unwrap();
     assert_eq!(sync(&cfg, &state_path).unwrap().deleted, 1);
+}
+
+#[test]
+fn backup_mode_preserves_deleted_files_in_both_targets_and_mirror_remains_explicit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("save.txt"), b"preserve").unwrap();
+    let mut cfg = make_config(&src, &tmp.path().join("target1"));
+    cfg.targets.push(Target::Local {
+        path: tmp.path().join("target2"),
+    });
+    cfg.settings.sync_mode = SyncMode::Backup;
+    let state = tmp.path().join("state.db");
+    assert_eq!(sync(&cfg, &state).unwrap().uploaded, 2);
+    fs::remove_file(src.join("save.txt")).unwrap();
+    assert_eq!(sync(&cfg, &state).unwrap().deleted, 0);
+    for name in ["target1", "target2"] {
+        assert_eq!(
+            fs::read(tmp.path().join(name).join("Documents/save.txt")).unwrap(),
+            b"preserve"
+        );
+    }
+    assert_eq!(State::open(&state).unwrap().count().unwrap(), 2);
+    cfg.settings.sync_mode = SyncMode::Mirror;
+    assert_eq!(sync(&cfg, &state).unwrap().deleted, 2);
+}
+
+#[test]
+fn new_profiles_default_to_backup_and_legacy_profiles_keep_mirroring() {
+    assert_eq!(Settings::default().sync_mode, SyncMode::Backup);
+    let tmp = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config.toml");
+    fs::write(&config, "folders = []\ntargets = []\n").unwrap();
+    assert_eq!(
+        Config::load(&config).unwrap().settings.sync_mode,
+        SyncMode::Mirror
+    );
+    fs::write(
+        &config,
+        "folders = []\ntargets = []\n[settings]\nauto_sync = false\n",
+    )
+    .unwrap();
+    let mut loaded = Config::load(&config).unwrap();
+    assert_eq!(loaded.settings.sync_mode, SyncMode::Mirror);
+    loaded.settings.sync_mode = SyncMode::Backup;
+    loaded.save(&config).unwrap();
+    assert_eq!(
+        Config::load(&config).unwrap().settings.sync_mode,
+        SyncMode::Backup
+    );
 }

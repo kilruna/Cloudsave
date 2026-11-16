@@ -170,6 +170,9 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             }
         }
 
+        if config.settings.sync_mode == crate::SyncMode::Backup {
+            continue;
+        }
         let p = format!("{}::", prefix);
         for key in state.all_paths()? {
             if let Some(rel) = key.strip_prefix(&p) {
