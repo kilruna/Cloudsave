@@ -1,12 +1,14 @@
-use std::fs;
-use std::io::{self, Read};
+use std::fs::{self, File};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::config::Target;
+use crate::webdav::WebdavBackend;
 
 pub trait Backend {
+    fn test_connection(&self) -> io::Result<()>;
     fn mkdirs(&self, rel: &Path) -> io::Result<()>;
-    fn put(&self, rel: &Path, data: &mut dyn Read) -> io::Result<u64>;
+    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64>;
     fn delete(&self, rel: &Path) -> io::Result<()>;
 }
 
@@ -23,6 +25,13 @@ impl LocalBackend {
 }
 
 impl Backend for LocalBackend {
+    fn test_connection(&self) -> io::Result<()> {
+        let tmp = self.root.join(".cloudsave-test");
+        fs::write(&tmp, b"ok")?;
+        fs::remove_file(&tmp)?;
+        Ok(())
+    }
+
     fn mkdirs(&self, rel: &Path) -> io::Result<()> {
         let p = self.root.join(rel);
         if let Some(parent) = p.parent() {
@@ -31,13 +40,13 @@ impl Backend for LocalBackend {
         Ok(())
     }
 
-    fn put(&self, rel: &Path, data: &mut dyn Read) -> io::Result<u64> {
+    fn put(&self, rel: &Path, mut file: File, _size: u64) -> io::Result<u64> {
         let p = self.root.join(rel);
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = fs::File::create(&p)?;
-        io::copy(data, &mut file)
+        let mut out = fs::File::create(&p)?;
+        io::copy(&mut file, &mut out)
     }
 
     fn delete(&self, rel: &Path) -> io::Result<()> {
@@ -49,8 +58,12 @@ impl Backend for LocalBackend {
     }
 }
 
-pub fn backend_for(target: &Target) -> io::Result<Box<dyn Backend>> {
+pub fn backend_for(target: &Target) -> crate::Result<Box<dyn Backend>> {
     match target {
         Target::Local { path } => Ok(Box::new(LocalBackend::new(path.clone())?)),
+        Target::Webdav { url, user } => {
+            let password = crate::secrets::load_password(url, user)?.unwrap_or_default();
+            Ok(Box::new(WebdavBackend::new(url, user, &password)?))
+        }
     }
 }

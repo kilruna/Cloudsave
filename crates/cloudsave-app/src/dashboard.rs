@@ -199,19 +199,27 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
         let config = config.clone();
         let sub = status_sub.clone();
         test_btn.connect_clicked(move |_| {
-            let cfg = config.borrow().clone();
-            match &cfg.target {
-                Target::Local { path } => {
-                    let r = std::fs::create_dir_all(path).and_then(|_| {
-                        let tmp = path.join(".cloudsave-test");
-                        std::fs::write(&tmp, b"ok").and_then(|_| std::fs::remove_file(&tmp))
-                    });
-                    match r {
-                        Ok(()) => sub.set_text(&format!("Ziel erreichbar: {}", path.display())),
-                        Err(e) => sub.set_text(&format!("Ziel nicht erreichbar: {}", e)),
-                    }
+            let target = config.borrow().target.clone();
+            let sub = sub.clone();
+            let (tx, rx) = mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                let msg = match cloudsave_core::backend_for(&target) {
+                    Ok(b) => match b.test_connection() {
+                        Ok(()) => "Ziel erreichbar ✓".to_string(),
+                        Err(e) => format!("Ziel nicht erreichbar: {}", e),
+                    },
+                    Err(e) => format!("Fehler: {}", e),
+                };
+                let _ = tx.send(msg);
+            });
+            glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(msg) => {
+                    sub.set_text(&msg);
+                    glib::ControlFlow::Break
                 }
-            }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+            });
         });
     }
     test_row.append(&test_label);
@@ -243,6 +251,10 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
     target.set_valign(gtk::Align::Start);
     let (t_name, t_sub_text) = match &config.borrow().target {
         Target::Local { path } => ("Lokales Ziel", path.to_string_lossy().to_string()),
+        Target::Webdav { url, user } => (
+            "Hetzner Storage Box (WebDAV)",
+            format!("{} · Benutzer {}", url, user),
+        ),
     };
     let t_title = gtk::Label::new(Some(t_name));
     t_title.add_css_class("target-title");

@@ -1,8 +1,11 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use adw::prelude::*;
+use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 
@@ -196,12 +199,22 @@ fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
     shell("Ordner wählen", &content, Some(next))
 }
 
+#[derive(Clone)]
+enum TargetChoice {
+    Local(PathBuf),
+    Webdav {
+        url: String,
+        user: String,
+        password: String,
+    },
+}
+
 fn target_page(
     window: &gtk::Window,
     nav: &adw::NavigationView,
     folders: Vec<PathBuf>,
 ) -> adw::NavigationPage {
-    let target: Rc<RefCell<Option<PathBuf>>> = Rc::new(RefCell::new(None));
+    let choice: Rc<RefCell<Option<TargetChoice>>> = Rc::new(RefCell::new(None));
     let next = gtk::Button::with_label("Weiter");
     next.add_css_class("suggested-action");
     next.add_css_class("pill");
@@ -222,21 +235,61 @@ fn target_page(
     row_local.add_suffix(&radio_local);
     group.add(&row_local);
 
-    let row_hetzner = adw::ActionRow::builder()
-        .title("Hetzner Storage Box")
-        .subtitle("WebDAV-Backend folgt in M2 – noch nicht verfügbar")
+    let row_webdav = adw::ActionRow::builder()
+        .title("Hetzner Storage Box (WebDAV)")
+        .subtitle("https://<benutzername>.your-storagebox.de – Port 443")
         .build();
-    row_hetzner.set_sensitive(false);
-    let radio_hetzner = gtk::CheckButton::new();
-    radio_hetzner.set_group(Some(&radio_local));
-    radio_hetzner.set_sensitive(false);
-    radio_hetzner.set_valign(gtk::Align::Center);
-    row_hetzner.add_suffix(&radio_hetzner);
-    group.add(&row_hetzner);
+    let radio_webdav = gtk::CheckButton::new();
+    radio_webdav.set_group(Some(&radio_local));
+    radio_webdav.set_valign(gtk::Align::Center);
+    row_webdav.set_activatable_widget(Some(&radio_webdav));
+    row_webdav.add_suffix(&radio_webdav);
+    group.add(&row_webdav);
+
+    let form = adw::PreferencesGroup::builder()
+        .title("Zugangsdaten Storage Box")
+        .visible(false)
+        .build();
+    let user_entry = adw::EntryRow::builder()
+        .title("Benutzername (z. B. u123456)")
+        .build();
+    let url_entry = adw::EntryRow::builder().title("Server").build();
+    let pw_entry = adw::PasswordEntryRow::builder().title("Passwort").build();
+    let test_row = adw::ActionRow::builder().title("Verbindung").build();
+    let test_btn = gtk::Button::with_label("Testen");
+    test_btn.set_valign(gtk::Align::Center);
+    test_row.add_suffix(&test_btn);
+    let status_label = gtk::Label::new(Some(""));
+    status_label.add_css_class("dim-label");
+    status_label.set_xalign(0.0);
+    let status_row = adw::ActionRow::builder().title("Status").build();
+    status_row.add_suffix(&status_label);
+    form.add(&user_entry);
+    form.add(&url_entry);
+    form.add(&pw_entry);
+    form.add(&test_row);
+    form.add(&status_row);
+
+    {
+        let form = form.clone();
+        radio_webdav.connect_toggled(move |c| {
+            form.set_visible(c.is_active());
+        });
+    }
+
+    {
+        let url_entry = url_entry.clone();
+        user_entry.connect_changed(move |e| {
+            let user = e.text().trim().to_string();
+            if !user.is_empty() {
+                url_entry.set_text(&format!("https://{}.your-storagebox.de", user));
+            }
+        });
+    }
 
     {
         let window = window.clone();
-        let target = target.clone();
+        let choice = choice.clone();
         let next = next.clone();
         let row_local = row_local.clone();
         radio_local.connect_toggled(move |c| {
@@ -244,7 +297,7 @@ fn target_page(
                 return;
             }
             let dialog = gtk::FileDialog::new();
-            let target = target.clone();
+            let choice = choice.clone();
             let next = next.clone();
             let row_local = row_local.clone();
             dialog.select_folder(Some(&window), None::<&gtk::gio::Cancellable>, move |res| {
@@ -252,7 +305,7 @@ fn target_page(
                     if let Some(path) = file.path() {
                         let subtitle = path.to_string_lossy().to_string();
                         row_local.set_subtitle(&subtitle);
-                        *target.borrow_mut() = Some(path);
+                        *choice.borrow_mut() = Some(TargetChoice::Local(path));
                         next.set_sensitive(true);
                     }
                 }
@@ -260,16 +313,97 @@ fn target_page(
         });
     }
 
+    {
+        let update = {
+            let choice = choice.clone();
+            let next = next.clone();
+            let radio_webdav = radio_webdav.clone();
+            let user_entry = user_entry.clone();
+            let url_entry = url_entry.clone();
+            let pw_entry = pw_entry.clone();
+            Rc::new(move || {
+                if !radio_webdav.is_active() {
+                    return;
+                }
+                let user = user_entry.text().trim().to_string();
+                let url = url_entry.text().trim().to_string();
+                let password = pw_entry.text().to_string();
+                let valid = !user.is_empty() && !url.is_empty() && !password.is_empty();
+                *choice.borrow_mut() = if valid {
+                    Some(TargetChoice::Webdav {
+                        url,
+                        user,
+                        password,
+                    })
+                } else {
+                    None
+                };
+                next.set_sensitive(valid);
+            })
+        };
+        let u = update.clone();
+        user_entry.connect_changed(move |_| u());
+        let u = update.clone();
+        url_entry.connect_changed(move |_| u());
+        let u = update.clone();
+        pw_entry.connect_changed(move |_| u());
+        let u = update.clone();
+        let choice = choice.clone();
+        let next = next.clone();
+        radio_webdav.connect_toggled(move |c| {
+            if c.is_active() {
+                u();
+            } else {
+                *choice.borrow_mut() = None;
+                next.set_sensitive(false);
+            }
+        });
+    }
+
+    {
+        let url_entry = url_entry.clone();
+        let user_entry = user_entry.clone();
+        let pw_entry = pw_entry.clone();
+        let status_label = status_label.clone();
+        test_btn.connect_clicked(move |_| {
+            let url = url_entry.text().to_string();
+            let user = user_entry.text().to_string();
+            let password = pw_entry.text().to_string();
+            status_label.set_text("Teste …");
+            let (tx, rx) = mpsc::channel::<String>();
+            std::thread::spawn(move || {
+                let msg = match cloudsave_core::WebdavBackend::new(&url, &user, &password) {
+                    Ok(b) => match b.test() {
+                        Ok(()) => "Verbunden ✓".to_string(),
+                        Err(e) => format!("Fehler: {}", e),
+                    },
+                    Err(e) => format!("Fehler: {}", e),
+                };
+                let _ = tx.send(msg);
+            });
+            let status_label = status_label.clone();
+            glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
+                Ok(msg) => {
+                    status_label.set_text(&msg);
+                    glib::ControlFlow::Break
+                }
+                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+                Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
+            });
+        });
+    }
+
     let content = page_content();
     content.append(&group);
+    content.append(&form);
 
     {
         let nav = nav.clone();
         let window = window.clone();
-        let target = target.clone();
+        let choice = choice.clone();
         next.connect_clicked(move |_| {
-            if let Some(path) = target.borrow().clone() {
-                nav.push(&done_page(&window, &nav, folders.clone(), path));
+            if let Some(choice) = choice.borrow().clone() {
+                nav.push(&done_page(&window, &nav, folders.clone(), choice));
             }
         });
     }
@@ -281,8 +415,21 @@ fn done_page(
     window: &gtk::Window,
     nav: &adw::NavigationView,
     folders: Vec<PathBuf>,
-    target: PathBuf,
+    choice: TargetChoice,
 ) -> adw::NavigationPage {
+    let (target_desc, target) = match &choice {
+        TargetChoice::Local(path) => (
+            path.display().to_string(),
+            Target::Local { path: path.clone() },
+        ),
+        TargetChoice::Webdav { url, user, .. } => (
+            format!("{} (Benutzer {})", url, user),
+            Target::Webdav {
+                url: url.clone(),
+                user: user.clone(),
+            },
+        ),
+    };
     let list = folders
         .iter()
         .map(|f| format!("• {}", f.display()))
@@ -291,7 +438,7 @@ fn done_page(
     let summary = format!(
         "{} Ordner sichern nach:\n{}\n\n{}\nDer erste Sync startet sofort.",
         folders.len(),
-        target.display(),
+        target_desc,
         list
     );
 
@@ -320,11 +467,17 @@ fn done_page(
         let nav = nav.clone();
         let window = window.clone();
         start.connect_clicked(move |_| {
+            if let TargetChoice::Webdav {
+                url,
+                user,
+                password,
+            } = &choice
+            {
+                let _ = cloudsave_core::save_password(url, user, password);
+            }
             let config = Config {
                 folders: folders.clone(),
-                target: Target::Local {
-                    path: target.clone(),
-                },
+                target: target.clone(),
                 settings: Settings::default(),
             };
             if config.save(&Config::default_path()).is_err() {

@@ -238,42 +238,10 @@ fn build_ui(app: &adw::Application) {
     card.set_valign(gtk::Align::Fill);
     root.append(&card);
 
-    let overlay = gtk::Overlay::new();
-    overlay.set_hexpand(true);
-    overlay.set_vexpand(true);
-    card.append(&overlay);
-
     let nav = adw::NavigationView::new();
     nav.set_hexpand(true);
     nav.set_vexpand(true);
-    overlay.set_child(Some(&nav));
-
-    let clouds = gtk::DrawingArea::new();
-    clouds.set_can_target(false);
-    clouds.set_size_request(340, 180);
-    clouds.set_halign(gtk::Align::End);
-    clouds.set_valign(gtk::Align::Start);
-    clouds.set_margin_top(14);
-    clouds.set_margin_end(4);
-    clouds.set_draw_func(|_, cr, w, h| {
-        let w = f64::from(w);
-        let h = f64::from(h);
-        draw_cloud_at(
-            cr,
-            w * 0.72,
-            h * 0.36,
-            w * 0.0052,
-            (0.647, 0.706, 0.988, 0.85),
-        );
-        draw_cloud_at(
-            cr,
-            w * 0.28,
-            h * 0.66,
-            w * 0.0030,
-            (0.486, 0.424, 0.953, 0.8),
-        );
-    });
-    overlay.add_overlay(&clouds);
+    card.append(&nav);
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) => {

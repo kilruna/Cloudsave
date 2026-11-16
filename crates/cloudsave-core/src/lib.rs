@@ -1,12 +1,16 @@
 mod backend;
 mod config;
 mod engine;
+mod secrets;
 mod state;
+mod webdav;
 
 pub use backend::{backend_for, Backend, LocalBackend};
 pub use config::{Config, Settings, Target};
 pub use engine::{sync, SyncReport};
+pub use secrets::{load_password, save_password};
 pub use state::State;
+pub use webdav::WebdavBackend;
 
 #[derive(Debug)]
 pub struct Error(pub String);
