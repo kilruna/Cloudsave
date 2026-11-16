@@ -17,3 +17,5 @@ secret-service = { version = "6.0.0-rc.1", features = ["crypto-rust"] }
 getrandom = "0.4"
 globset = "0.4"
 notify = "8"
+roxmltree = "0.21"
+percent-encoding = "2"

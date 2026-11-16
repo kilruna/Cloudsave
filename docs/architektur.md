@@ -1,3 +1,30 @@
+# Tatsächlicher Implementierungsstand
+
+Die sechs Roadmap-Erweiterungen sind im Core und in der GTK-App umgesetzt;
+Details und verbleibende Aufgaben: [roadmap-status.md](roadmap-status.md).
+Der nachfolgende Architekturentwurf bleibt das Zielbild für die weiteren Phasen.
+
+Aktuell läuft der Sync in Workern der GTK-App. `ChangeWatcher` registriert notify-
+Watcher in einem eigenen Thread, bündelt Ereignisse und ignoriert App-State/Ziele.
+Ein periodischer Scan bleibt aktiv. Zugangsdaten liegen im Secret Service;
+Legacy-Passwortdateien werden nach erfolgreicher Übernahme entfernt.
+
+Lokale Uploads verwenden exklusive Tempdateien, Größenprüfung, fsync und Rename;
+WebDAV verwendet exklusiven temporären PUT und MOVE. Der Backup-Modus erhält lokal
+entfernte Dateien; Spiegelung löscht nur nach vollständigem erfolgreichem Quellscan.
+Ausschlüsse werden auch vor Löschentscheidungen beachtet.
+
+`Backend::list` und `Backend::download` ermöglichen Wiederherstellung von lokalen
+und WebDAV-Zielen. DAV-Listen werden rekursiv mit Depth 1 innerhalb desselben
+Origins/Zielpfads eingelesen. Downloads verwenden Tempdateien und
+`persist_noclobber`; relative Pfade und Symlink-Eltern werden geprüft.
+
+Die Flatpak erhält `home:ro` für die tatsächliche Home-Ordnerliste und Leserechte
+für ausgewählte Quellen; zusätzliche Schreibziele kommen über den Datei-Dialog.
+Ein separater D-Bus-Daemon, rsync/SFTP/S3 und genauer Transferfortschritt sind geplant.
+
+---
+
 # Architektur
 
 ## Komponenten-Übersicht
@@ -42,14 +69,14 @@ Wichtige Crates: `gtk4`, `libadwaita`, `ashpd` (Portale), `zbus` (D-Bus), `notif
 
 ## State & Konfiguration
 
-- **Konfig:** TOML in `~/.var/app/io.github.kilruna.Cloudsave/config/` (Ordner, Ziel, Intervalle, Flags).
-- **State:** SQLite in `~/.var/app/io.github.kilruna.Cloudsave/data/` – pro Datei: Pfad, mtime, Größe, optionaler Hash, Sync-Status, Remote-Informationen. Indiziert für schnelle Scans.
+- **Konfig:** TOML in `~/.var/app/org.cloudsave.Cloudsave/config/` (Ordner, Ziel, Intervalle, Flags).
+- **State:** SQLite in `~/.var/app/org.cloudsave.Cloudsave/data/` – pro Datei: Pfad, mtime, Größe, optionaler Hash, Sync-Status, Remote-Informationen. Indiziert für schnelle Scans.
 - **Zugangsdaten:** Nie in Klartext-Dateien, sondern im Secret Service (org.freedesktop.secrets, via ashpd). SSH-Keys als Keyfile-Pfad oder über ssh-agent.
 
 ## Flatpak-Packaging
 
 - **Runtime/SDK:** `org.gnome.Platform` / `org.gnome.Sdk` (GNOME 47), Rust über `sdk-extensions: org.freedesktop.Sdk.Extension.rust-stable`. Rust-Crates werden mit `cargo vendor` + `flatpak-cargo-generator` vendored.
-- **App-ID:** `io.github.kilruna.Cloudsave`, Command `cloudsave`.
+- **App-ID:** `org.cloudsave.Cloudsave`, Command `cloudsave`.
 - **finish-args (so restriktiv wie möglich – kein `--filesystem=home`):** Portale statt breiter Rechte:
 
 ```json
@@ -66,7 +93,7 @@ Wichtige Crates: `gtk4`, `libadwaita`, `ashpd` (Portale), `zbus` (D-Bus), `notif
 ```
 
 - **Ordnerzugriff über das Document Portal:** Beim Auswählen wird `portal.Documents.AddFull(..., persistent=true)` aufgerufen. Die gewählten Ordner sind dann persistent unter `/run/user/$UID/doc/…` erreichbar – auch nach Neustart, ohne pauschalen Home-Zugriff.
-- **Hintergrunddienst:** D-Bus-aktivierbarer Service (`io.github.kilruna.Cloudsave.service` mit `Exec=cloudsave-daemon`), Autostart der GUI über XDG-Autostart-Eintrag in der Sandbox; der Daemon startet bedarfsgesteuert bzw. beim Login.
+- **Hintergrunddienst:** D-Bus-aktivierbarer Service (`org.cloudsave.Cloudsave.service` mit `Exec=cloudsave-daemon`), Autostart der GUI über XDG-Autostart-Eintrag in der Sandbox; der Daemon startet bedarfsgesteuert bzw. beim Login.
 - **Veröffentlichung:** Flathub (Build + Review über flatpak-builder in CI).
 
 ## Ressourcenschonung (Zusammenfassung)

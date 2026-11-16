@@ -87,3 +87,22 @@ authenticated remote WebDAV transfers. The HTTP-401 test uses a local mock serve
 Before declaring the installed Flatpak verified, build/install the new revision,
 run the default suite against that installation, and manually test the real
 portal and Wayland window operations requested by the report.
+
+## Roadmap-Regressionsabdeckung
+
+UI-24 prüft einen nicht verfügbaren Schlüsselbund (Fehler sichtbar, keine neue
+Klartextdatei/Config). UI-25 prüft Backup-/Spiegelungsmodus über einen Neustart und
+zwei Ziele. UI-26 prüft Ausschlussmuster und ungültige Eingaben. UI-27 prüft echte
+Dateiänderungen mit automatischem Transfer und Auto-Sync AUS. UI-28 verwendet die
+Wiederherstellungsansicht und den tatsächlichen GTK-Zielordnerdialog für Unicode-
+Dateien und prüft den Schutz vorhandener Dateien.
+
+Der echte Secret-Service-Roundtrip ist zusätzlich als gezielt ausführbarer Core-
+Integrationstest vorhanden (isolierter, entsperrter GNOME Keyring/KWallet nötig):
+
+```sh
+cargo test -p cloudsave-core system_keyring_roundtrip -- --ignored
+```
+
+Die normalen Core-Tests ersetzen für Migration/Fehler nur den Credential-Store;
+Sync-/Restore-Dateioperationen und die lokalen HTTP-/Dateisystemtests sind echt.
