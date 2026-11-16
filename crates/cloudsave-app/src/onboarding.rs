@@ -492,9 +492,11 @@ fn done_page(
             {
                 let _ = cloudsave_core::save_password(url, user, password);
             }
-            let mut settings = Settings::default();
-            settings.autostart = autostart_switch.is_active();
-            let autostart = settings.autostart;
+            let autostart = autostart_switch.is_active();
+            let settings = Settings {
+                autostart,
+                ..Settings::default()
+            };
             let config = Config {
                 folders: folders.clone(),
                 target: target.clone(),
