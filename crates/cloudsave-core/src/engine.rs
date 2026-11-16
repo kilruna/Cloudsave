@@ -45,6 +45,20 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             .push("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.".into());
         return Ok(report);
     }
+    for target in &config.targets {
+        if let Target::Local { path } = target {
+            let destination = crate::paths::resolved(path)?;
+            for folder in &config.folders {
+                let source = crate::paths::resolved(folder)?;
+                if destination.starts_with(&source) || source.starts_with(&destination) {
+                    report.errors.push(format!("Quelle {} und Ziel {} überlappen sich. Bitte einen getrennten Sicherungsordner wählen.", folder.display(), path.display()));
+                }
+            }
+        }
+    }
+    if !report.errors.is_empty() {
+        return Ok(report);
+    }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
     let mut state = State::open(state_path)?;
 

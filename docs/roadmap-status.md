@@ -6,7 +6,7 @@ Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 - [x] Wählbarer Backup-Modus ohne Löschweitergabe. Neue Profile starten im Backup-Modus; vorhandene Profile behalten die bisherige Spiegelung. Der Modus ist im Dashboard umstellbar.
 - [x] Abbruchsichere Uploads: lokale Tempdatei mit Größenprüfung/fsync/atomarem Ersetzen; WebDAV mit exklusivem temporärem PUT und MOVE. Fehlgeschlagene Übertragungen ersetzen keine gültige Sicherung.
 - [x] Ausschlussmuster: ein Glob pro Zeile im Dashboard. Namen ohne / gelten für jede Pfadkomponente; Pfade mit / relativ zur Quelle. Ausgeschlossene Bestandsdateien werden auch bei Spiegelung nicht gelöscht.
-- [ ] Ereignisbasierte Änderungserkennung mit Bündelung und Scan-Fallback.
+- [x] Ereignisbasierte Änderungserkennung: notify/inotify im Worker, drei Sekunden Ruhezeit, bestehendes Intervall als Scan-Fallback. Auto-Sync AUS bleibt wirksam; Quellen und Ausschlüsse werden beim Ändern neu registriert.
 - [ ] Sicherungen durchsuchen und ausgewählte Dateien wiederherstellen.
 
 Für den Schlüsselbund muss ein Secret-Service-Anbieter in der Desktopsitzung laufen

@@ -513,6 +513,26 @@ def exclusion_settings():
     finally:ui.stop()
 
 
+def automatic_changes():
+    ui=UI('automatic-changes',auto_sync=True,exclude_patterns=['*.tmp']);source,targets=fixture(ui)
+    try:
+        ui.launch();ui.idle()
+        ready=eventually(lambda:any('Änderungen werden automatisch erkannt' in label for label in ui.labels()))
+        (source/'save.txt').write_text('automatically propagated, longer version')
+        propagated=eventually(lambda:all((target/'Documents/save.txt').exists() and (target/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() for target in targets),12)
+        ui.idle();ui.set_active('GtkSwitch',False)
+        previous=(targets[0]/'Documents/save.txt').read_bytes()
+        (source/'save.txt').write_text('manual-only after auto switch is disabled, even longer')
+        time.sleep(4.5)
+        paused=all((target/'Documents/save.txt').read_bytes()==previous for target in targets)
+        ui.click('Jetzt synchronisieren');ui.idle()
+        record('UI-27','Filesystem events synchronize after debounce and respect auto OFF',ready and propagated and paused and
+               all((target/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() for target in targets),
+               f'Watcher ready={ready}; propagated without manual sync={propagated}; auto OFF respected={paused}',
+               'Automatic writes follow real changes; auto OFF pauses them; manual sync still works')
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -541,6 +561,7 @@ def main():
         unavailable_keyring()
         backup_mode()
         exclusion_settings()
+        automatic_changes()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2

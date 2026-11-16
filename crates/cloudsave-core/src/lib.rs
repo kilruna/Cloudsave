@@ -3,8 +3,10 @@ mod backend;
 mod config;
 mod engine;
 mod exclusions;
+mod paths;
 mod secrets;
 mod state;
+mod watch;
 mod webdav;
 
 pub use autostart::{autostart_enabled, set_autostart};
@@ -14,6 +16,7 @@ pub use engine::{sync, target_label, SyncReport};
 pub use exclusions::validate_exclusion_patterns;
 pub use secrets::{load_password, save_password};
 pub use state::State;
+pub use watch::{ChangeWatcher, WatchConfig, WatchEvent};
 pub use webdav::{validate_webdav_url, WebdavBackend};
 
 #[derive(Debug)]

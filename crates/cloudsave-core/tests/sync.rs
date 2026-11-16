@@ -465,3 +465,29 @@ fn exclusions_apply_to_all_targets_and_survive_config_roundtrip() {
             .exists());
     }
 }
+
+#[test]
+fn local_backup_target_may_not_overlap_its_source_even_through_symlinks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    fs::create_dir(&src).unwrap();
+    fs::write(src.join("save"), b"source").unwrap();
+    let mut cfg = make_config(&src, &src.join("backup"));
+    let state = tmp.path().join("state.db");
+    assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+    assert!(!src.join("backup").exists());
+    cfg.targets = vec![Target::Local {
+        path: tmp.path().to_path_buf(),
+    }];
+    assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&src, tmp.path().join("alias")).unwrap();
+        cfg.targets = vec![Target::Local {
+            path: tmp.path().join("alias/new-backup"),
+        }];
+        assert!(!sync(&cfg, &state).unwrap().errors.is_empty());
+        assert!(!src.join("new-backup").exists());
+    }
+    assert_eq!(fs::read(src.join("save")).unwrap(), b"source");
+}
