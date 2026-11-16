@@ -1,6 +1,7 @@
 mod dashboard;
 mod onboarding;
 mod restore;
+mod tray;
 
 use adw::prelude::*;
 use gtk::glib;
@@ -202,9 +203,20 @@ pub(crate) fn icon(kind: Icon, size: i32, red: f64, green: f64, blue: f64) -> gt
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder()
         .application_id("org.cloudsave.Cloudsave")
+        .flags(gtk::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+    app.add_main_option(
+        "background",
+        glib::Char(0),
+        glib::OptionFlags::NONE,
+        glib::OptionArg::None,
+        "Im Hintergrund starten",
+        None,
+    );
 
-    app.connect_startup(|_| {
+    let tray = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let startup_tray = tray.clone();
+    app.connect_startup(move |app| {
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         if let Some(display) = gtk::gdk::Display::default() {
@@ -215,14 +227,38 @@ fn main() -> glib::ExitCode {
             );
         }
         adw::StyleManager::default().set_color_scheme(adw::ColorScheme::ForceDark);
+        match tray::Tray::new(app) {
+            Ok(item) => *startup_tray.borrow_mut() = Some(item),
+            Err(error) => eprintln!("Systemabschnitt nicht verfügbar: {error}"),
+        }
+    });
+    app.connect_shutdown(move |_| {
+        tray.borrow_mut().take();
     });
 
-    app.connect_activate(build_ui);
+    app.connect_activate(|app| open_window(app, false));
+    app.connect_command_line(|app, command_line| {
+        let background = command_line.options_dict().contains("background");
+        open_window(app, background);
+        glib::ExitCode::SUCCESS
+    });
     app.run()
 }
 
-fn build_ui(app: &adw::Application) {
-    let background = std::env::args().any(|a| a == "--background");
+// Activation (launcher, tray, or a second process) must reuse the same window
+// and its sync worker. Hidden windows remain registered with GtkApplication,
+// keeping the background process alive until an explicit quit or window destroy.
+fn open_window(app: &adw::Application, background: bool) {
+    if let Some(window) = app.windows().first() {
+        if !background {
+            window.present();
+        }
+        return;
+    }
+    build_ui(app, background);
+}
+
+fn build_ui(app: &adw::Application, background: bool) {
     let window = gtk::ApplicationWindow::new(app);
     window.set_title(Some("Cloudsave"));
     window.set_default_size(1120, 760);
