@@ -10,12 +10,13 @@ Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du beliebige Ordner a
 - **Mehrere Quellordner:** Beliebig viele Verzeichnisse pro Ziel – per Datei-Auswahl hinzufügen und jederzeit per Häkchen an- bzw. abwählen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
-- **Sichere Zugangsdaten:** Passwörter liegen im Secret Service (libsecret), nie in Klartext-Dateien.
-- **Ressourcenschonend:** Ereignisgesteuerter Hintergrund-Dienst, der zwischen Syncs schläft; optional Bandbreiten-Limit und Pausieren bei niedrigem Akku.
+- **Sichere Zugangsdaten:** Passwörter liegen nie in der `config.toml`, sondern in einer Datei mit `0600`-Berechtigung im App-Config-Verzeichnis (Fallback: Umgebungsvariable).
+- **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`) und läuft nach dem Schließen des Fensters im Hintergrund weiter; der Auto-Sync läuft im einstellbaren Intervall (Standard: 5 Minuten) und überträgt nur Geändertes.
+- **Ressourcenschonend:** Zwischen den Syncs wird nur stat-geprüft, nicht die ganze Platte gelesen; laufender Sync belegt keine UI.
 
 ## Ziele (Protokolle)
 
-Hetzner Storage Box (rsync/SFTP über SSH, WebDAV), WebDAV/Nextcloud, S3-kompatibler Object Storage (z. B. Hetzner Object Storage), FTPS, BorgBackup sowie lokale und externe Laufwerke. Details und Priorisierung siehe [docs/protocols.md](docs/protocols.md).
+Verfügbar: **WebDAV (HTTPS)** – z. B. Hetzner Storage Box (`https://uXXXXX.your-storagebox.de`), Nextcloud, ownCloud – sowie **lokale Ordner / USB-Laufwerke**. Geplant: SFTP, SSH (rsync), FTP(S), S3-kompatibler Object Storage (z. B. Hetzner Object Storage), BorgBackup. Details und Priorisierung siehe [docs/protocols.md](docs/protocols.md).
 
 ## Technik
 

@@ -221,10 +221,26 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &adw::Application) {
+    let background = std::env::args().any(|a| a == "--background");
     let window = gtk::ApplicationWindow::new(app);
     window.set_title(Some("Cloudsave"));
     window.set_default_size(1120, 760);
     window.set_decorated(false);
+
+    {
+        let window = window.clone();
+        window.connect_close_request(move |w| {
+            let hide = cloudsave_core::Config::load(&cloudsave_core::Config::default_path())
+                .map(|c| c.settings.run_in_background)
+                .unwrap_or(true);
+            if hide {
+                w.hide();
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+    }
 
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     root.add_css_class("window-bg");
@@ -245,7 +261,7 @@ fn build_ui(app: &adw::Application) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) => {
-            let page = dashboard::build(window.upcast_ref(), &config, false);
+            let page = dashboard::build(window.upcast_ref(), &config, true);
             nav.push(&adw::NavigationPage::new(&page, "Übersicht"));
         }
         Err(_) => {
@@ -253,5 +269,7 @@ fn build_ui(app: &adw::Application) {
         }
     }
 
-    window.present();
+    if !background {
+        window.present();
+    }
 }
