@@ -16,3 +16,10 @@ confidence-threshold = 0.8
 
 [advisories]
 yanked = "deny"
+
+# notify is published under the CC0 public-domain dedication. Keep this scoped
+# to the audited dependency/version rather than allowing new licenses globally.
+[[licenses.exceptions]]
+name = "notify"
+version = "=8.2.2"
+allow = ["CC0-1.0"]
