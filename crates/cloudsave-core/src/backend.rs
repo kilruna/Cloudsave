@@ -66,7 +66,7 @@ pub fn backend_for(target: &Target) -> crate::Result<Box<dyn Backend>> {
     match target {
         Target::Local { path } => Ok(Box::new(LocalBackend::new(path.clone())?)),
         Target::Webdav { url, user } => {
-            let password = crate::secrets::load_password(url, user)?.unwrap_or_default();
+            let password = crate::secrets::load_password(url, user)?.ok_or_else(|| crate::Error("Kein Passwort im Schlüsselbund gefunden. Zugangsdaten bitte erneut einrichten.".into()))?;
             Ok(Box::new(WebdavBackend::new(url, user, &password)?))
         }
     }

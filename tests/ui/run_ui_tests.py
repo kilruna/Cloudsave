@@ -461,6 +461,22 @@ def empty_or_missing_home():
                    'Explain empty/unavailable home, keep manual folder picker, and require a selected source',ui.snapshot('home-state'))
 
 
+def unavailable_keyring():
+    with UI('unavailable-keyring', home_dirs=('Documents',)) as ui:
+        ui.click('Einrichtung starten');ui.set_active('GtkCheckButton',True);ui.click('Weiter')
+        ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
+        for title,value in [('Benutzername','synthetic-qa'),('Server-URL','https://example.invalid'),('Passwort','not-a-real-password')]:
+            entry=ui.find('AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow',title)
+            ui.command('text',entry['id'],value)
+        ui.click('Weiter');ui.set_active('GtkSwitch',False);ui.click('Sync einrichten & starten')
+        shown=eventually(lambda:any('System-Schlüsselbund' in text for text in ui.labels()))
+        record('UI-24','Keyring failure keeps setup open and does not persist plaintext',shown and
+               not ui.cfg.exists() and not list((ui.root/'config').rglob('*.secret')) and
+               bool(ui.find('GtkButton','Sync einrichten & starten')['sensitive']),
+               'Keyring unavailable on isolated bus; setup can retry',
+               'Visible error, responsive GTK, no configured target or plaintext password',ui.snapshot('keyring-error'))
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -486,6 +502,7 @@ def main():
     try:
         for test in (onboarding,dashboard,missing_source,empty_targets):test()
         empty_or_missing_home()
+        unavailable_keyring()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2

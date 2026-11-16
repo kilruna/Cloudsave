@@ -15,6 +15,7 @@ finish-args:
   - --device=dri
   - --socket=session-bus
   - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
   - --talk-name=org.freedesktop.portal.Desktop
   # Enumerate real home folders and read selected backup sources.
   - --filesystem=home:ro
