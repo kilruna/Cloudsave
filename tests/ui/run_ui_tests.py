@@ -495,6 +495,24 @@ def backup_mode():
     finally:ui.stop()
 
 
+def exclusion_settings():
+    ui=UI('exclusion-settings');source,targets=fixture(ui)
+    (source/'old.tmp').write_text('keep existing backup')
+    try:
+        ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Einstellungen')
+        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'*.tmp');ui.click('Ausschlüsse speichern')
+        saved=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp']
+        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'[');ui.click('Ausschlüsse speichern')
+        invalid_rejected=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp'] and any('Nicht gespeichert' in label for label in ui.labels())
+        (source/'old.tmp').unlink();(source/'new.tmp').write_text('ignore new file')
+        ui.click('Jetzt synchronisieren');ui.idle()
+        record('UI-26','Exclusions validate and preserve existing excluded backups',saved and invalid_rejected and
+               all((target/'Documents/old.tmp').exists() and not (target/'Documents/new.tmp').exists() for target in targets),
+               f'Saved={saved}; invalid pattern rejected={invalid_rejected}',
+               'Invalid patterns do not replace saved rules; excluded backup files are retained')
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -522,6 +540,7 @@ def main():
         empty_or_missing_home()
         unavailable_keyring()
         backup_mode()
+        exclusion_settings()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2

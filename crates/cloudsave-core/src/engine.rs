@@ -45,6 +45,7 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             .push("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.".into());
         return Ok(report);
     }
+    let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
     let mut state = State::open(state_path)?;
 
     let mut scanned: HashMap<String, (PathBuf, i64, i64)> = HashMap::new();
@@ -76,7 +77,15 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("root"));
         let mut complete = true;
-        for entry in walkdir::WalkDir::new(folder).follow_links(false) {
+        for entry in walkdir::WalkDir::new(folder)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| {
+                entry.depth() == 0
+                    || !exclusions
+                        .matches(entry.path().strip_prefix(folder).unwrap_or(entry.path()))
+            })
+        {
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
@@ -176,6 +185,10 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
         let p = format!("{}::", prefix);
         for key in state.all_paths()? {
             if let Some(rel) = key.strip_prefix(&p) {
+                let relative: PathBuf = Path::new(rel).components().skip(1).collect();
+                if exclusions.matches(&relative) {
+                    continue;
+                }
                 let source_complete = state
                     .source(&key)?
                     .is_some_and(|source| deletable_sources.contains(&source));

@@ -43,6 +43,8 @@ FN(void,g_signal_emit_by_name,(P,const char*,...));
 FN(int,gtk_widget_activate,(P));
 FN(void,gtk_window_close,(P));
 FN(void,gtk_drop_down_set_selected,(P,unsigned));
+FN(P,gtk_text_view_get_buffer,(P));
+FN(void,gtk_text_buffer_set_text,(P,const char*,int));
 static int is(P w,const char*t){ T n=g_type_from_name(t);return n && g_type_check_instance_is_a(w,n); }
 static void text(FILE*f,const char*s){if(s)for(;*s;s++)fputc((*s=='\t'||*s=='\n'||*s=='\r')?' ':*s,f);}
 static void visit(P w,int parent,FILE*f){
@@ -78,6 +80,7 @@ static int tick(P unused){
  else if(!strcmp(verb,"click")&&is(w,"GtkButton")&&gtk_widget_is_sensitive(w))g_signal_emit_by_name(w,"clicked");
  else if(!strcmp(verb,"active")&&is(w,"GtkCheckButton"))gtk_check_button_set_active(w,val?atoi(val):0);
  else if(!strcmp(verb,"active")&&is(w,"GtkSwitch"))gtk_switch_set_active(w,val?atoi(val):0);
+ else if(!strcmp(verb,"buffer")&&is(w,"GtkTextView"))gtk_text_buffer_set_text(gtk_text_view_get_buffer(w),val?val:"",-1);
  else if(!strcmp(verb,"selected")&&is(w,"GtkDropDown"))gtk_drop_down_set_selected(w,val?atoi(val):0);
  else if(!strcmp(verb,"value")&&is(w,"GtkSpinButton"))gtk_spin_button_set_value(w,val?atof(val):0);
  else if(!strcmp(verb,"text")&&g_type_check_instance_is_a(w,gtk_editable_get_type()))gtk_editable_set_text(w,val?val:"");
@@ -91,6 +94,6 @@ static int tick(P unused){
 #define LOAD(n) do{*(void**)(&n)=dlsym(RTLD_DEFAULT,#n);if(!n)return;}while(0)
 __attribute__((constructor))static void init(void){
  const char*d=getenv("CLOUDSAVE_QA_DIR");if(!d)return;snprintf(dir,sizeof(dir),"%s",d);
- LOAD(gtk_drop_down_set_selected);LOAD(g_timeout_add);LOAD(gtk_window_get_toplevels);LOAD(g_list_model_get_n_items);LOAD(g_list_model_get_item);LOAD(g_object_unref);LOAD(g_type_name_from_instance);LOAD(g_type_from_name);LOAD(g_type_check_instance_is_a);LOAD(gtk_widget_get_first_child);LOAD(gtk_widget_get_next_sibling);LOAD(gtk_widget_get_visible);LOAD(gtk_widget_get_mapped);LOAD(gtk_widget_is_sensitive);LOAD(gtk_widget_get_width);LOAD(gtk_widget_get_height);LOAD(gtk_label_get_text);LOAD(gtk_button_get_label);LOAD(gtk_check_button_get_active);LOAD(gtk_check_button_set_active);LOAD(gtk_switch_get_active);LOAD(gtk_switch_set_active);LOAD(gtk_spin_button_get_value);LOAD(gtk_spin_button_set_value);LOAD(gtk_editable_set_text);LOAD(gtk_editable_get_text);LOAD(gtk_editable_get_type);LOAD(g_signal_emit_by_name);LOAD(gtk_widget_activate);LOAD(gtk_window_close);
+ LOAD(gtk_text_view_get_buffer);LOAD(gtk_text_buffer_set_text);LOAD(gtk_drop_down_set_selected);LOAD(g_timeout_add);LOAD(gtk_window_get_toplevels);LOAD(g_list_model_get_n_items);LOAD(g_list_model_get_item);LOAD(g_object_unref);LOAD(g_type_name_from_instance);LOAD(g_type_from_name);LOAD(g_type_check_instance_is_a);LOAD(gtk_widget_get_first_child);LOAD(gtk_widget_get_next_sibling);LOAD(gtk_widget_get_visible);LOAD(gtk_widget_get_mapped);LOAD(gtk_widget_is_sensitive);LOAD(gtk_widget_get_width);LOAD(gtk_widget_get_height);LOAD(gtk_label_get_text);LOAD(gtk_button_get_label);LOAD(gtk_check_button_get_active);LOAD(gtk_check_button_set_active);LOAD(gtk_switch_get_active);LOAD(gtk_switch_set_active);LOAD(gtk_spin_button_get_value);LOAD(gtk_spin_button_set_value);LOAD(gtk_editable_set_text);LOAD(gtk_editable_get_text);LOAD(gtk_editable_get_type);LOAD(g_signal_emit_by_name);LOAD(gtk_widget_activate);LOAD(gtk_window_close);
  g_timeout_add(50,tick,NULL);
 }
