@@ -65,8 +65,13 @@ private Pfade in Meldungen oder Screenshots bitte schwärzen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
 - **Sichere Zugangsdaten:** Passwörter liegen im System-Schlüsselbund. Alte Passwortdateien werden nach erfolgreicher Übernahme entfernt.
-- **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`) und läuft nach dem Schließen des Fensters im Hintergrund weiter; der Auto-Sync läuft im einstellbaren Intervall (Standard: 5 Minuten) und überträgt nur Geändertes.
+- **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`). Mit aktivierter Hintergrundoption verbirgt **×** das Fenster; das Symbol im Systemabschnitt bleibt auch bei geöffnetem Fenster verfügbar. Ein Klick oder **Cloudsave öffnen** im Symbolmenü öffnet dasselbe Fenster wieder. **Beenden** im Symbolmenü oder **App beenden** in den Einstellungen beendet die App vollständig. Ohne Hintergrundoption beendet bereits **×** die App.
 - **Ressourcenschonend:** Datei-Ereignisse lösen gebündelte Syncs aus; ein geplanter Scan dient als Fallback. Übertragungen laufen außerhalb des UI-Threads.
+
+Das Symbol verwendet den StatusNotifierItem-Standard, den etwa KDE Plasma
+unterstützt. Bei GNOME ist dafür eine AppIndicator-/StatusNotifier-Erweiterung
+erforderlich. Ohne passenden Systemabschnitt lässt sich ein verborgenes Fenster
+über den App-Starter erneut öffnen.
 
 ## Ziele (Protokolle)
 

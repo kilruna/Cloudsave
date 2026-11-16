@@ -106,3 +106,29 @@ cargo test -p cloudsave-core system_keyring_roundtrip -- --ignored
 
 Die normalen Core-Tests ersetzen für Migration/Fehler nur den Credential-Store;
 Sync-/Restore-Dateioperationen und die lokalen HTTP-/Dateisystemtests sind echt.
+
+## Fenster und Systemabschnitt
+
+Die separate Lifecycle-Suite benötigt zusätzlich einen isolierten Sitzungs-D-Bus
+(`dbus-run-session`, Paket `dbus-daemon`). Sie verwendet einen Protokoll-Testdienst
+für den StatusNotifierWatcher, die echte App und den vorhandenen GTK-Test-Bridge:
+
+```sh
+TMPDIR="$PWD/work/ui-tmp" GSK_RENDERER=cairo xvfb-run -a \
+  dbus-run-session -- env CLOUDSAVE_ISOLATED_TEST_BUS=1 \
+  /usr/bin/python3 tests/ui/run_lifecycle_tests.py \
+  --binary target/debug/cloudsave --output "$PWD/work/lifecycle-results"
+```
+
+Geprüft werden das aktive Tray-Objekt bei sichtbarem und verborgenem Fenster,
+das DBusMenu, fünf Schließen-/Öffnen-Zyklen mit nur einem Fenster, Aktivierung
+durch einen zweiten Prozess, echter Auto-Sync bei verborgenem Fenster,
+erneute Registrierung nach einem Watcher-Neustart, später Panel-Start,
+`--background`, explizites Beenden über beide Menüs und Schließen bei
+deaktiviertem Hintergrundbetrieb. Profil und Sicherungsdateien sind isolierte
+Testdaten. `results.json` protokolliert bestandene Prüfungen, Stderr-Logs und
+Config-Snapshots ergänzen die Belege.
+
+Diese Suite prüft das D-Bus-Protokoll und die native GTK-Lebensdauer. Darstellung
+und Klickverhalten im echten Plasma-/GNOME-Panel sowie die installierte Flatpak
+unter Wayland bleiben manuell zu prüfen.
