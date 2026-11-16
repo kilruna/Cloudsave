@@ -1,5 +1,6 @@
 mod dashboard;
 mod onboarding;
+mod restore;
 
 use adw::prelude::*;
 use gtk::glib;

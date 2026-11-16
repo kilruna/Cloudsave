@@ -35,4 +35,15 @@ Verfügbar: **WebDAV (HTTPS)** – z. B. Hetzner Storage Box (`https://uXXXXX.yo
 
 ## Status
 
-Frühe Planungsphase. Der ausführliche Plan mit Feature-Set, Architektur, UX-Flow und Meilensteinen liegt in [docs/plan.md](docs/plan.md). CI-Grundgerüst (Phase 0–2, siehe [docs/ci.md](docs/ci.md)) ist eingerichtet und grün; das M0-Skelett (Workspace `crates/cloudsave-core` + `crates/cloudsave-app`) baut in CI ein Flatpak-Bundle (`flatpak/org.cloudsave.Cloudsave.yml`, GNOME 50).
+Die App unterstützt lokale Sicherungsziele und WebDAV (z. B. Hetzner Storage Box),
+mehrere Endpunkte, echte Home-Ordnerauswahl, Zugangsdaten im System-Schlüsselbund,
+Backup-/Spiegelungsmodus, Ausschlussmuster, automatische Änderungserkennung und
+Wiederherstellung einzelner Dateien. Uploads werden vor dem Ersetzen einer alten
+Sicherung auf einen temporären Pfad geschrieben.
+
+Neue Profile verwenden den Backup-Modus ohne Löschweitergabe. Vorhandene Profile
+behalten ihre bisherige Spiegelung; der Modus ist unter Einstellungen umstellbar.
+Beim Wiederherstellen bleiben vorhandene lokale Dateien erhalten.
+
+[Bedienung und aktueller Roadmap-Stand](docs/roadmap-status.md) ·
+[GTK-Regressionstests](tests/ui/README.md)

@@ -489,6 +489,18 @@ pub fn build(
         });
     }
     target.append(&add_target_btn);
+    let restore_button = gtk::Button::with_label("Sicherungen wiederherstellen");
+    restore_button.add_css_class("add-btn");
+    restore_button.set_margin_top(12);
+    target.append(&restore_button);
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        let config = config.clone();
+        restore_button.connect_clicked(move |_| {
+            nav.push(&crate::restore::page(&window, &config.borrow().targets));
+        });
+    }
     right.append(&target);
 
     let ui = SyncUi {

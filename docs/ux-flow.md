@@ -1,65 +1,67 @@
-# UX-Flow: Vom Start bis zum eingerichteten Sync
+# UX-Flow: Einrichtung, Sicherung und Wiederherstellung
 
-Leitlinie: **absolute Userfreundlichkeit**. Ein linearer Flow, maximal drei Schritte bis zum laufenden Sync, keine verschachtelten Menüs. Alles Wesentliche ist auf einer Seite sichtbar.
+Cloudsave bleibt ein Ein-Wege-Backup: ausgewählte Quellen werden an ein oder
+mehrere Ziele gesichert. Die Wiederherstellung ist eine ausdrückliche Aktion.
 
-## Der Flow
+## Einrichtung
 
-```
-Start der App
-│
-├─ Noch nicht eingerichtet
-│    └─ Welcome-Seite: ein Satz, was Cloudsave macht
-│       → großer Button [Einrichtung starten]
-│
-├─ Schritt 1: Ordner wählen
-│    └─ Datei-Dialog (Flatpak-Portal), mehrere Ordner auf einmal auswählbar
-│       + Schnellwahl: ☐ Dokumente  ☐ Bilder  ☐ Musik  ☐ Videos  ☐ Schreibtisch
-│       → [Weiter]
-│
-├─ Schritt 2: Ziel wählen
-│    └─ Typ: SFTP / WebDAV / lokaler Ordner
-│       Felder: Server, Port, Benutzer, Passwort oder SSH-Key, Remote-Pfad
-│       → [Verbindung testen] → Rückmeldung in Klartext („Verbunden ✓" / „Passwort falsch“)
-│       → [Weiter]
-│
-└─ Schritt 3: Fertig
-     └─ „Alles eingerichtet – der erste Sync startet jetzt."
-        → Hauptansicht
-```
+1. **Willkommen** → **Einrichtung starten**.
+2. **Ordner wählen** zeigt sichtbare, tatsächlich vorhandene direkte Home-Unterordner
+   alphabetisch ohne automatische Vorauswahl. Dateien und versteckte Ordner sind
+   ausgeblendet. Andere Ordner können über den Datei-Dialog hinzugefügt werden;
+   doppelte Pfade werden nicht doppelt aufgenommen. Ohne Auswahl bleibt Weiter aus.
+3. **Ziel wählen**: lokaler Ordner per wiederverwendbarem Auswahlbutton oder WebDAV
+   mit syntaktisch geprüfter HTTPS-URL, Benutzername und Passwort. Verbindungstests
+   sind separat möglich. Für Hetzner-Subaccounts gehören Benutzername und Domain
+   des Subaccounts zusammen, z. B. `uXXXXX-sub1.your-storagebox.de`.
+4. **Fertig** zeigt die Auswahl. **Sync einrichten & starten** speichert Zugangsdaten
+   im System-Schlüsselbund und startet den ersten Sync. D-Bus-Zugriffe laufen im
+   Worker; Fehler halten die Einrichtung offen und sind sichtbar.
 
-## Hauptansicht (nach der Einrichtung)
+Neue Profile beginnen im Backup-Modus ohne Löschweitergabe. Abbrechen eines
+Datei-Dialogs erhält die vorherige gültige Auswahl.
 
-Eine Seite, drei Bereiche – keine Menü-Tiefe:
+## Dashboard
 
-1. **Status-Banner oben:** „Alles synchronisiert ✓ · letzter Sync vor 2 Min.“ oder „Sync läuft … 12/143 Dateien“ oder „Fehler: Server nicht erreichbar – [Erneut versuchen]".
-2. **Mitte – zwei Karten:**
-   - *Gesicherte Ordner:* Liste mit Checkboxen zum An-/Abhaken, jeweils letzter Stand.
-   - *Ziel:* Server-Adresse, Buttons [Jetzt synchronisieren] und Schalter [Automatisch synchronisieren an/aus].
-3. **Unten – Einstellungen** (ein aufklappbarer Bereich, keine Untermenüs): Sync-Modus (sofort bei Änderung / stündlich / täglich), Pause bei Akkubetrieb, Pause bei getakteter Verbindung, Benachrichtigungen, Bandbreitenlimit.
+- **Jetzt synchronisieren** bleibt auch bei ausgeschaltetem Auto-Sync verfügbar.
+- Status zeigt Erfolg oder vollständige kopierbare Fehler mit Quell-/Zielpfaden
+  und Wiederholen-Hinweis. Bei Fehlern erscheint kein voller Erfolgsbalken.
+- Ordner lassen sich einzeln abwählen oder über den Dialog ergänzen. Abwählen oder
+  ein nicht lesbarer Quellbaum löscht keine vorhandenen Sicherungen.
+- Mehrere lokale/WebDAV-Endpunkte können hinzugefügt werden.
+- Auto-Sync erkennt Dateiänderungen nach drei Sekunden Ruhezeit. Der Zeitplan
+  bleibt Scan-Fallback und versucht fehlgeschlagene Beobachtungen erneut.
+- Einstellungen enthalten Intervall, Ausschlussmuster, Backup-/Spiegelungsmodus,
+  Autostart, Hintergrundbetrieb, Verbindungstest und Beenden.
+- Ausschlussmuster werden vor dem Speichern geprüft. Bestehende ausgeschlossene
+  Sicherungen bleiben auch bei Spiegelung erhalten.
+- Spiegelung ist ausdrücklich beschriftet: absichtlich lokal gelöschte Dateien
+  werden im Ziel entfernt. Bestehende Profile behalten ihre bisherige Einstellung.
 
-## Gestaltungsregeln
+Lokale Quellen und Ziele dürfen nicht ineinander liegen. Temporäre Dateien,
+App-State und lokale Zieländerungen erzeugen keine Beobachtungsschleifen.
 
-- **Ein offensichtlicher nächster Schritt** pro Bildschirm; der primäre Button ist immer klar hervorgehoben.
-- **Klartext statt Technik-Jargon:** Fehler werden übersetzt („Passwort falsch" statt „SSH_AUTH_FAILED“), mit konkreter Aktion („Zugangsdaten ändern" / „Erneut versuchen").
-- **Keine versteckten Funktionen:** Alles, was es gibt, ist in Hauptansicht oder im einen Einstellungsbereich erreichbar.
-- **Wenig frågen, sinnvolle Defaults:** Automatischer Sync an, Deletes spiegeln, Benachrichtigungen nur bei Fehlern.
-- **Barrierefrei und dunkelmodusfähig:** durch libadwaita automatisch; volle Tastaturbedienung; Tooltips nur beim ersten Start.
-- **Onboarding ohne Overhead:** Die Welcome-Seite erklärt in einem Satz das Prinzip und startet direkt in Schritt 1 – kein Tour-Marathon.
+## Wiederherstellung
 
-## Zustände, die angezeigt werden müssen
+**Sicherungen wiederherstellen** öffnet eine eigene Seite mit Zurück-Navigation:
 
-- Leerlauf/alles synchronisiert · Sync läuft (mit Fortschritt) · Pausiert (Akku/getaktet/manuell) · Fehler (mit Klartext + Aktion) · Ersteinrichtung läuft (erster Vollsync).
+1. Endpunkt wählen und **Sicherungen laden**.
+2. Gewünschte Dateien mit relativen Pfaden und Größen markieren.
+3. **Wiederherstellungsordner wählen** über den nativen Datei-Dialog.
+4. **Wiederherstellen** lädt die Dateien im Worker unter Erhalt der Ordnerstruktur.
 
-## Umgesetztes Design der Hauptansicht (Mockup)
+Dateien werden zunächst temporär geschrieben und erst nach vollständigem Download
+übernommen. Vorhandene Dateien werden nicht überschrieben; unsichere Pfade und
+Symlinks in Zielpfaden werden zurückgewiesen. Fehler nennen die betroffenen Dateien.
 
-Die Hauptansicht (`dashboard.rs`) folgt dem aktuellen UI-Mockup (dunkler Blau-Verlauf, schwebende Karte, lila Akzent) – eine Seite, keine Menüs:
+## Fenster und Testgrenzen
 
-- **Fenster:** rahmenlos (`set_decorated(false)`), Hintergrund Blau-Verlauf (`.window-bg`), zentrale Karte `.main-card` (`#151E3C`, 18 px Ecken, Rand + Schatten, blauer Glow oben rechts, zwei dekorative Wolken per cairo).
-- **Kopfzeile in der Karte:** lila Wolken-Logo + „Cloudsave“ (weiß, fett) links, lila Pill-Button „Jetzt synchronisieren“ (`.sync-btn`) rechts.
-- **Statusblock linksbündig:** Titel („Bereit“ / „Sync läuft“ / „Alles synchronisiert“, `.sync-title`), Unterzeile (`.sync-sub`, z. B. „143 Dateien gesichert · letzter Sync vor 2 Min“), Fortschrittsbalken (`.sync-progress`: Track transparent mit weißem Rahmen, Füllung weiß→lavender; pulsiert während des Syncs).
-- **Zwei Spalten (ca. 60/40):** links „Gesicherte Ordner“ als Kartenliste (Checkbox + Ordner-Icon + Ordnername, aus der Config befüllt), „Ordner hinzufügen“-Button (`.add-btn`, FileDialog), aufklappbarer „Einstellungen“-Bereich (Pfeil + `Revealer`: Sync-Rhythmus, Benachrichtigungen, Akku-Pause, Verbindung testen); rechts Ziel-Karte (`.target-card`: Ziel-Name + Pfad/Untertitel, Zeile „Automatisch synchronisieren“ + Schalter, persistiert in die Config).
-- **Farben (CSS in `crates/cloudsave-app/src/main.rs`):** Akzent Lila `#9D7CFF` über `accent_bg_color` (Button, Checkboxen, Schalter), Karten `rgba(255,255,255,0.055)`, `ColorScheme::ForceDark` erzwungen. Icons (Wolke/Ordner) werden per cairo in den Mockup-Farben gezeichnet.
+Nur die äußere Anwendungs-Titelleiste enthält Fensterbuttons. Seitentitel und
+Zurück-Navigation bleiben erhalten. Die native GTK-Suite verwendet echte Widgets,
+Dateien und lokale Ziele unter Xvfb. Reale Flatpak-Portal-Freigaben und native
+Wayland-Fensterbedienung benötigen weiterhin eine manuelle Abnahme.
 
-## Umgesetzt (PR #4): Onboarding + Dashboard
+## Noch geplant
 
-Der Flow ist in `crates/cloudsave-app/src/onboarding.rs` als `AdwNavigationView` umgesetzt: Welcome → Ordner wählen (Checkboxen für vorhandene Standardordner, „Anderer Ordner …“ via FileDialog) → Ziel wählen (lokal aktiv; Hetzner Storage Box als „folgt in M2“ deaktiviert) → Fertig (schreibt `~/.config/cloudsave/config.toml` und startet den ersten Sync). Ohne vorhandene Config startet die App im Onboarding, sonst direkt im Dashboard (`dashboard.rs`): „Jetzt synchronisieren“ läuft `cloudsave-core::sync` im Worker-Thread, Status-Titel/-zeile + Fortschrittsbalken aktualisieren sich aus dem SQLite-State, Ordner-Checkboxen persistieren in die Config.
+Genauer Transferfortschritt in Dateien/Bytes, Abbrechen, Desktop-Benachrichtigungen,
+Bandbreitenlimit und Pausen nach Akku-/Netzwerkzustand sind noch nicht Teil der UI.

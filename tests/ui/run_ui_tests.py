@@ -535,6 +535,30 @@ def automatic_changes():
     finally:ui.stop()
 
 
+def restore_ui():
+    ui=UI('restore-ui');source,targets=fixture(ui)
+    try:
+        ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        listed=eventually(lambda:any('Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
+        checks=[node for node in ui.tree() if node['type']=='GtkCheckButton' and node['mapped']]
+        for check in reversed(checks):ui.command('active',check['id'],1)
+        output=ui.root/'restore-output';output.mkdir()
+        ui.click('Wiederherstellungsordner wählen …');run('xdotool','key','ctrl+l');time.sleep(.2)
+        entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(output));run('xdotool','key','Return')
+        eventually(lambda:not any(node['type']=='GtkFileChooserDialog' and node['mapped'] for node in ui.tree()))
+        ui.click('Wiederherstellen')
+        restored=eventually(lambda:(output/'Documents/nested/ümlaut.txt').exists())
+        exact=restored and (output/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() and (output/'Documents/nested/ümlaut.txt').read_bytes()==(source/'nested/ümlaut.txt').read_bytes()
+        eventually(lambda:ui.find('GtkButton','Wiederherstellen')['sensitive'])
+        (output/'Documents/save.txt').write_text('existing local edits must stay')
+        ui.click('Wiederherstellen')
+        refused=eventually(lambda:any('nicht überschrieben' in text for text in ui.labels()))
+        record('UI-28','Browse and restore actual backup files without overwriting local changes',listed and exact and refused and (output/'Documents/save.txt').read_text()=='existing local edits must stay',
+               f'Listed={listed}; byte-exact Unicode restore={exact}; overwrite refused={refused}',
+               'Real backup listing, native destination chooser, exact file contents and overwrite protection',ui.snapshot('restored'))
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -564,6 +588,7 @@ def main():
         backup_mode()
         exclusion_settings()
         automatic_changes()
+        if BINARY:restore_ui()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2

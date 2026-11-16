@@ -65,12 +65,18 @@ fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) 
     body.truncate(content_length);
 
     let rel = path.trim_start_matches('/');
-    let fs_path = srv_root.join(rel);
+    let rel = percent_encoding::percent_decode_str(rel)
+        .decode_utf8()
+        .unwrap();
+    let fs_path = srv_root.join(rel.as_ref());
 
     let (status, reason, extra) = if fail == Some(method.as_str()) {
         (500, "Injected failure", None)
     } else {
         match method.as_str() {
+            "GET" if fs_path.is_file() => (200, "OK", None),
+            "GET" => (404, "Not Found", None),
+            "PROPFIND" if !fs_path.is_dir() => (404, "Not Found", None),
             "PROPFIND" => (
                 207,
                 "Multi-Status",
@@ -83,7 +89,10 @@ fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) 
             "PUT" if exclusive && fs_path.exists() => (412, "Precondition Failed", None),
             "MOVE" => {
                 let destination = reqwest::Url::parse(&destination).unwrap();
-                let dest = srv_root.join(destination.path().trim_start_matches('/'));
+                let decoded = percent_encoding::percent_decode_str(destination.path())
+                    .decode_utf8()
+                    .unwrap();
+                let dest = srv_root.join(decoded.trim_start_matches('/'));
                 fs::rename(&fs_path, &dest).unwrap();
                 (201, "Created", None)
             }
@@ -101,20 +110,45 @@ fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) 
             _ => (405, "Method Not Allowed", None),
         }
     };
-    let body_out = if method == "PROPFIND" {
-        r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:"></D:multistatus>"#.to_string()
+    let body_out = if method == "PROPFIND" && fs_path.is_dir() {
+        let mut entries = vec![fs_path.clone()];
+        entries.extend(
+            fs::read_dir(&fs_path)
+                .unwrap()
+                .map(|entry| entry.unwrap().path()),
+        );
+        let mut xml = String::from(r#"<?xml version="1.0"?><D:multistatus xmlns:D="DAV:">"#);
+        for entry in entries {
+            let relative = entry.strip_prefix(srv_root).unwrap().to_string_lossy();
+            let mut url = reqwest::Url::parse("http://localhost/").unwrap();
+            url.set_path(&format!(
+                "/{relative}{}",
+                if entry.is_dir() { "/" } else { "" }
+            ));
+            let href = url.path().replace('&', "&amp;");
+            let resource = if entry.is_dir() {
+                "<D:collection/>"
+            } else {
+                ""
+            };
+            xml.push_str(&format!("<D:response><D:href>{href}</D:href><D:propstat><D:prop><D:resourcetype>{resource}</D:resourcetype><D:getcontentlength>{}</D:getcontentlength></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",entry.metadata().unwrap().len()));
+        }
+        xml.push_str("</D:multistatus>");
+        xml.into_bytes()
+    } else if method == "GET" && fs_path.is_file() {
+        fs::read(&fs_path).unwrap()
     } else {
-        String::new()
+        Vec::new()
     };
     let resp = format!(
-        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
+        "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n",
         status,
         reason,
         body_out.len(),
-        extra.unwrap_or_default(),
-        body_out
+        extra.unwrap_or_default()
     );
     let _ = stream.write_all(resp.as_bytes());
+    let _ = stream.write_all(&body_out);
     let _ = stream.flush();
 }
 
@@ -255,4 +289,51 @@ fn failed_temporary_put_or_move_preserves_previous_webdav_backup() {
         );
         assert_eq!(fs::read_dir(srv.join("base/Documents")).unwrap().count(), 1);
     }
+}
+
+#[test]
+fn webdav_backups_can_be_browsed_and_restored_with_unicode_paths() {
+    use cloudsave_core::{list_backups, restore_files};
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("Documents");
+    let srv = tmp.path().join("server");
+    fs::create_dir_all(src.join("nested")).unwrap();
+    fs::write(
+        src.join("nested/ümlaut & spaces.txt"),
+        b"roundtrip bytes\0\xff",
+    )
+    .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target = Target::Webdav {
+        url: format!("http://{}/base", listener.local_addr().unwrap()),
+        user: "qa".into(),
+    };
+    let server_root = srv.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            handle_conn(stream, &server_root);
+        }
+    });
+    let config = Config {
+        folders: vec![src],
+        targets: vec![target.clone()],
+        settings: Settings::default(),
+    };
+    let report = sync(&config, &tmp.path().join("state.db")).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    let files = list_backups(&target).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(
+        files[0].path,
+        Path::new("Documents/nested/ümlaut & spaces.txt")
+    );
+    let output = tmp.path().join("restore");
+    fs::create_dir(&output).unwrap();
+    let report = restore_files(&target, &files, &output).unwrap();
+    assert_eq!(report.restored, 1, "{:?}", report.errors);
+    assert_eq!(
+        fs::read(output.join(&files[0].path)).unwrap(),
+        b"roundtrip bytes\0\xff"
+    );
 }

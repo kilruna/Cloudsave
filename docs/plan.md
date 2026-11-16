@@ -2,12 +2,22 @@
 
 Flatpak-Desktop-App für Linux (Rust), die ausgewählte Ordner automatisch und ressourcenschonend auf ein Cloud-Ziel sichert – z. B. eine Hetzner Storage Box. Leitlinie: **absolute Userfreundlichkeit**, flacher Flow, keine verschachtelten Menüs.
 
+## Aktueller Stand
+
+Onboarding mit echten Home-Ordnern, lokale Ziele/WebDAV, mehrere Endpunkte,
+System-Schlüsselbund, wählbarer Backup-/Spiegelungsmodus, abbruchsichere Uploads,
+Ausschlussmuster, Änderungserkennung mit Debounce/Fallback und Wiederherstellung
+sind implementiert. Details, Bedienung und verbleibende Aufgaben stehen im
+[Umsetzungsstand](roadmap-status.md). Die folgenden Phasen beschreiben das Zielbild;
+SFTP/rsync, S3, Benachrichtigungen, genauer Transferfortschritt und Akku-/Bandbreitenregeln
+sind noch offen. Die installierte Flatpak benötigt weiterhin die manuelle Portal-/Wayland-Abnahme.
+
 ## 1. Vision & Design-Entscheidungen
 
 - **„Ordner anhaken → Ziel wählen → fertig."** Die komplette Ersteinrichtung ist ein Flow aus max. 3 Schritten.
 - Cloudsave ist ein **Ein-Wege-Backup** (lokal → remote) mit Restore-Funktion – keine bidirektionale Synchronisation wie bei Syncthing. Das hält Konflikte und UI einfach.
 - **Ressourcenschonung als Architekturprinzip:** ereignisgesteuert (inotify) statt dauerhaft scannend; der Daemon schläft zwischen Syncs.
-- **Sicherheit:** Zugangsdaten im Secret Service (libsecret), TLS überall, Ordner-Zugriff über das Dokumenten-Portal statt pauschalem `--filesystem=home`.
+- **Sicherheit:** Zugangsdaten im Secret Service (libsecret), TLS überall, Lesezugriff auf Home für die Ordnerliste (`--filesystem=home:ro`); zusätzliche Ordner und Schreibziele über den Datei-Dialog.
 
 ## 2. Feature-Set (phasenweise)
 
@@ -41,7 +51,7 @@ Flatpak-Desktop-App für Linux (Rust), die ausgewählte Ordner automatisch und r
 
 ### Phase 3
 
-- Mehrere Ziele/Backup-Policies pro Ordner-Set
+- Mehrere Ziele sind umgesetzt; getrennte Backup-Policies pro Ordner-Set sind noch geplant
 - Clientseitige Verschlüsselung (z. B. `age`)
 - BorgBackup-Backend (Dedup + Verschlüsselung)
 - Übersetzungen, Tray-Icon, Flathub-Veröffentlichung
@@ -91,7 +101,7 @@ Danach gibt es **ein einziges Hauptfenster**: Status, Ordnerliste (jeder Ordner 
 
 - Manifest `org.cloudsave.Cloudsave.yml` gegen GNOME Platform / Freedesktop SDK, Rust über `org.freedesktop.Sdk.Extension.rust-stable` (oder cargo in den Sources).
 - `finish-args`: `--share=network`, `--socket=session-bus`, `--talk-name=org.freedesktop.Notifications`, `--talk-name=org.freedesktop.secrets`, Portal-Zugriff (`org.freedesktop.portal.Documents` / FileChooser mit persist), `--filesystem=xdg-config/autostart` für den Autostart des Daemons.
-- **Kein** `--filesystem=home`: Ordner-Freigaben kommen einzeln über das Dokumenten-Portal.
+- Aktuell `--filesystem=home:ro` für das Einlesen vorhandener Home-Ordner und ausgewählter Quellen. Zusätzliche Freigaben und lokale Schreibziele werden über das Dokumenten-Portal gewählt.
 - SSH/rsync für die Storage Box werden im Bundle mitgeliefert; Credentials kommen aus dem Secret Service und gelangen per Askpass-Helfer an den SSH-Client – keine Klartext-Keys auf Platte.
 
 ## 6. Ressourcenschonung

@@ -4,8 +4,11 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Target;
 use crate::webdav::WebdavBackend;
+use crate::BackupFile;
 
 pub trait Backend {
+    fn list(&self) -> io::Result<Vec<BackupFile>>;
+    fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64>;
     fn test_connection(&self) -> io::Result<()>;
     fn mkdirs(&self, rel: &Path) -> io::Result<()>;
     fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64>;
@@ -25,6 +28,38 @@ impl LocalBackend {
 }
 
 impl Backend for LocalBackend {
+    fn list(&self) -> io::Result<Vec<BackupFile>> {
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(&self.root).follow_links(false) {
+            let entry = entry.map_err(io::Error::other)?;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let relative = entry
+                .path()
+                .strip_prefix(&self.root)
+                .map_err(io::Error::other)?
+                .to_path_buf();
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".cloudsave-upload-")
+                && entry.file_name().to_string_lossy().ends_with(".part")
+            {
+                continue;
+            }
+            files.push(BackupFile {
+                path: relative,
+                size: Some(entry.metadata().map_err(io::Error::other)?.len()),
+            });
+        }
+        Ok(files)
+    }
+    fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64> {
+        let path = crate::restore::safe_path(&self.root, rel, false)?;
+        io::copy(&mut File::open(path)?, writer)
+    }
+
     fn test_connection(&self) -> io::Result<()> {
         // NamedTempFile exclusively creates a random path and cleans up on errors too.
         let mut tmp = tempfile::Builder::new()
