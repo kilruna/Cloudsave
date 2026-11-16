@@ -477,6 +477,24 @@ def unavailable_keyring():
                'Visible error, responsive GTK, no configured target or plaintext password',ui.snapshot('keyring-error'))
 
 
+def backup_mode():
+    ui=UI('backup-mode');source,targets=fixture(ui)
+    try:
+        ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle()
+        ui.click('Einstellungen');mode=ui.find('GtkDropDown');ui.command('selected',mode['id'],0)
+        saved=tomllib.loads(ui.cfg.read_text())['settings'].get('sync_mode')=='backup'
+        (source/'save.txt').unlink()
+        ui.stop();ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle()
+        retained=all((target/'Documents/save.txt').exists() for target in targets)
+        ui.click('Einstellungen');mode=ui.find('GtkDropDown');ui.command('selected',mode['id'],1)
+        ui.click('Jetzt synchronisieren');ui.idle()
+        record('UI-25','Backup mode persists across restart and mirror is explicit',saved and retained and
+               all(not (target/'Documents/save.txt').exists() for target in targets),
+               f'Backup setting persisted={saved}; deleted files retained={retained}',
+               'Backup retains removed files; choosing mirror propagates their deletion')
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -503,6 +521,7 @@ def main():
         for test in (onboarding,dashboard,missing_source,empty_targets):test()
         empty_or_missing_home()
         unavailable_keyring()
+        backup_mode()
         if BINARY:native_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2
