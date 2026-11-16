@@ -13,4 +13,4 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.2"
 walkdir = "2"
 tempfile = "3"
-secret-service = { version = "5.1", features = ["rt-async-io-crypto-rust"] }
+secret-service = { version = "6.0.0-rc.1", features = ["crypto-rust"] }
