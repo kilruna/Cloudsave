@@ -156,6 +156,7 @@ fn webdav_backend_roundtrip_via_mock_server() {
 
 #[test]
 fn authentication_failure_is_reported_with_target_and_source() {
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
     let tmp = tempfile::tempdir().unwrap();
     let src = tmp.path().join("Documents");
     fs::create_dir(&src).unwrap();

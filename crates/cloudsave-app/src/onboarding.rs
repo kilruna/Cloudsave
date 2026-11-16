@@ -476,6 +476,59 @@ fn target_picker(
     (content, choice, next)
 }
 
+// Secret Service may prompt the user. Keep blocking D-Bus work off GTK's main thread.
+fn save_task<T: Send + 'static>(
+    button: &gtk::Button,
+    status: &gtk::Label,
+    task: impl FnOnce() -> cloudsave_core::Result<T> + Send + 'static,
+    success: impl Fn(T) + 'static,
+) {
+    button.set_sensitive(false);
+    status.set_text("Einstellungen werden gespeichert … Schlüsselbund gegebenenfalls entsperren.");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(task());
+    });
+    let button = button.clone();
+    let status = status.clone();
+    glib::timeout_add_local(Duration::from_millis(100), move || match rx.try_recv() {
+        Ok(Ok(value)) => {
+            success(value);
+            glib::ControlFlow::Break
+        }
+        Ok(Err(error)) => {
+            status.set_text(&error.to_string());
+            button.set_sensitive(true);
+            glib::ControlFlow::Break
+        }
+        Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            status.set_text("Speichern abgebrochen. Bitte erneut versuchen.");
+            button.set_sensitive(true);
+            glib::ControlFlow::Break
+        }
+    });
+}
+
+impl TargetChoice {
+    fn save_target(&self) -> cloudsave_core::Result<Target> {
+        match self {
+            Self::Local(path) => Ok(Target::Local { path: path.clone() }),
+            Self::Webdav {
+                url,
+                user,
+                password,
+            } => {
+                cloudsave_core::save_password(url, user, password)?;
+                Ok(Target::Webdav {
+                    url: url.clone(),
+                    user: user.clone(),
+                })
+            }
+        }
+    }
+}
+
 fn target_page(
     window: &gtk::Window,
     nav: &adw::NavigationView,
@@ -501,38 +554,38 @@ pub fn add_target_page(
     config: Rc<RefCell<Config>>,
 ) -> adw::NavigationPage {
     let (content, choice, add) = target_picker(window, "Hinzufügen");
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
+    content.append(&status);
     {
         let nav = nav.clone();
         let window = window.clone();
-        let choice = choice.clone();
         let config = config.clone();
-        add.connect_clicked(move |_| {
-            if let Some(choice) = choice.borrow().clone() {
-                let target = match &choice {
-                    TargetChoice::Local(path) => Target::Local { path: path.clone() },
-                    TargetChoice::Webdav {
-                        url,
-                        user,
-                        password,
-                    } => {
-                        let _ = cloudsave_core::save_password(url, user, password);
-                        Target::Webdav {
-                            url: url.clone(),
-                            user: user.clone(),
-                        }
-                    }
-                };
-                {
-                    let mut cfg = config.borrow_mut();
+        add.connect_clicked(move |button| {
+            let Some(choice) = choice.borrow().clone() else {
+                return;
+            };
+            let mut cfg = config.borrow().clone();
+            let config = config.clone();
+            let nav = nav.clone();
+            let window = window.clone();
+            save_task(
+                button,
+                &status,
+                move || {
+                    let target = choice.save_target()?;
                     if !cfg.targets.contains(&target) {
                         cfg.targets.push(target);
                     }
-                    let _ = cfg.save(&Config::default_path());
-                }
-                let cfg = config.borrow().clone();
-                let page = dashboard::build(&window, &nav, &cfg, false);
-                nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
-            }
+                    cfg.save(&Config::default_path())?;
+                    Ok(cfg)
+                },
+                move |cfg| {
+                    *config.borrow_mut() = cfg.clone();
+                    let page = dashboard::build(&window, &nav, &cfg, false);
+                    nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+                },
+            );
         });
     }
     shell("Endpunkt hinzufügen", &content, Some(add))
@@ -603,43 +656,51 @@ fn done_page(
     autostart_row.append(&autostart_label);
     autostart_row.append(&autostart_switch);
 
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
     {
         let nav = nav.clone();
         let window = window.clone();
         let autostart_switch = autostart_switch.clone();
-        start.connect_clicked(move |_| {
-            if let TargetChoice::Webdav {
-                url,
-                user,
-                password,
-            } = &choice
-            {
-                let _ = cloudsave_core::save_password(url, user, password);
-            }
+        let status = status.clone();
+        start.connect_clicked(move |button| {
+            let choice = choice.clone();
+            let folders = folders.clone();
+            let target = target.clone();
             let autostart = autostart_switch.is_active();
-            let settings = Settings {
-                autostart,
-                ..Settings::default()
-            };
-            let config = Config {
-                folders: folders.clone(),
-                targets: vec![target.clone()],
-                settings,
-            };
-            if config.save(&Config::default_path()).is_err() {
-                return;
-            }
-            if autostart {
-                let _ = cloudsave_core::set_autostart(true);
-            }
-            let page = dashboard::build(&window, &nav, &config, true);
-            nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+            let nav = nav.clone();
+            let window = window.clone();
+            save_task(
+                button,
+                &status,
+                move || {
+                    choice.save_target()?;
+                    let config = Config {
+                        folders,
+                        targets: vec![target],
+                        settings: Settings {
+                            autostart,
+                            ..Settings::default()
+                        },
+                    };
+                    config.save(&Config::default_path())?;
+                    if autostart {
+                        cloudsave_core::set_autostart(true)?;
+                    }
+                    Ok(config)
+                },
+                move |config| {
+                    let page = dashboard::build(&window, &nav, &config, true);
+                    nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+                },
+            );
         });
     }
 
     content.append(&title);
     content.append(&summary_label);
     content.append(&autostart_row);
+    content.append(&status);
     content.append(&start);
     shell("Fertig", &content, None)
 }
