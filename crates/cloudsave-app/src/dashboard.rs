@@ -165,7 +165,7 @@ pub fn build(window: &gtk::Window, config: &Config, autostart: bool) -> gtk::Wid
         10.0,
         0.0,
     );
-    let interval_spin = gtk::SpinButton::new(&interval_adj, 1.0, 0);
+    let interval_spin = gtk::SpinButton::new(Some(&interval_adj), 1.0, 0);
     interval_spin.set_valign(gtk::Align::Center);
     {
         let config = config.clone();

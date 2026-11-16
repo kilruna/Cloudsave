@@ -234,7 +234,7 @@ fn build_ui(app: &adw::Application) {
                 .map(|c| c.settings.run_in_background)
                 .unwrap_or(true);
             if hide {
-                w.hide();
+                w.set_visible(false);
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed

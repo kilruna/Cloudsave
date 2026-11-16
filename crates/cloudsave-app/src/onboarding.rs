@@ -494,6 +494,7 @@ fn done_page(
             }
             let mut settings = Settings::default();
             settings.autostart = autostart_switch.is_active();
+            let autostart = settings.autostart;
             let config = Config {
                 folders: folders.clone(),
                 target: target.clone(),
@@ -502,7 +503,7 @@ fn done_page(
             if config.save(&Config::default_path()).is_err() {
                 return;
             }
-            if settings.autostart {
+            if autostart {
                 let _ = cloudsave_core::set_autostart(true);
             }
             let page = dashboard::build(&window, &config, true);
