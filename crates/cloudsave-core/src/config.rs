@@ -15,6 +15,7 @@ pub struct Config {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Target {
     Local { path: PathBuf },
+    Webdav { url: String, user: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

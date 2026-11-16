@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -16,19 +15,6 @@ pub struct SyncReport {
     pub skipped: usize,
     pub bytes: u64,
     pub errors: Vec<String>,
-}
-
-struct HashingReader<R: Read> {
-    inner: R,
-    hasher: blake3::Hasher,
-}
-
-impl<R: Read> Read for HashingReader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.hasher.update(&buf[..n]);
-        Ok(n)
-    }
 }
 
 fn mtime_secs(meta: &fs::Metadata) -> i64 {
@@ -120,13 +106,14 @@ fn upload_one(
 ) -> Result<()> {
     let rel = Path::new(key);
     backend.mkdirs(rel)?;
+    let mut hasher = blake3::Hasher::new();
+    {
+        let mut f = fs::File::open(abs)?;
+        std::io::copy(&mut f, &mut hasher)?;
+    }
+    let hash = hasher.finalize().to_hex().to_string();
     let file = fs::File::open(abs)?;
-    let mut reader = HashingReader {
-        inner: file,
-        hasher: blake3::Hasher::new(),
-    };
-    let written = backend.put(rel, &mut reader)?;
-    let hash = reader.hasher.finalize().to_hex().to_string();
+    let written = backend.put(rel, file, size as u64)?;
     state.upsert(key, size, mtime, &hash)?;
     report.uploaded += 1;
     report.bytes += written;
