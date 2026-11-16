@@ -50,18 +50,16 @@ Eine Seite, drei Bereiche – keine Menü-Tiefe:
 
 - Leerlauf/alles synchronisiert · Sync läuft (mit Fortschritt) · Pausiert (Akku/getaktet/manuell) · Fehler (mit Klartext + Aktion) · Ersteinrichtung läuft (erster Vollsync).
 
-## Umgesetztes Design der Hauptansicht (M1-Skelett)
+## Umgesetztes Design der Hauptansicht (Mockup)
 
-Die Hauptansicht ist als **dunkles Dashboard** im Stil der Referenz gestaltet (dunkler Hintergrund, Karten, orange Akzent) und trotzdem auf einen Blick erfassbar – eine Seite, keine Menüebenen:
+Die Hauptansicht (`dashboard.rs`) folgt dem aktuellen UI-Mockup (dunkler Blau-Verlauf, schwebende Karte, lila Akzent) – eine Seite, keine Menüs:
 
-- **Farben (CSS-Overrides in `crates/cloudsave-app/src/main.rs`):** Hintergrund `#121212`, Karten `#1E1E1E` (16 px Ecken), Akzent Orange `#FF7A29` (über `accent_bg_color` – färbt den primären Button „Jetzt synchronisieren“ in der Headerbar orange), Farbschema per `ColorScheme::ForceDark` erzwungen.
-- **Headerbar:** Titel „Cloudsave“ + rechts der orange **pill**-Button „Jetzt synchronisieren“.
-- **Status-Banner oben:** `AdwBanner` („Alles synchronisiert · letzter Sync vor …“).
-- **Stat-Karten (3er-Raster):** große Zahl + kleines Label – „Dateien gesichert“, „auf dem Ziel belegt“, „letzter Sync“ (eigene CSS-Klasse `.stat-card`).
-- **Gruppen als Karten** (`AdwPreferencesGroup`): „Gesicherte Ordner“ (Zeilen mit Checkbox rechts, plus Zeile „Anderer Ordner hinzufügen …“), „Ziel“ (Hetzner Storage Box + Button „Verbindung testen“ + Schalter „Automatisch synchronisieren“), „Einstellungen“ (Sync-Rhythmus als `AdwComboRow`, Schalter für Fehler-Benachrichtigung und Akku-Pause).
-
-Der Ersteinrichtungs-Flow (Welcome → Ordner → Ziel → fertig) wird als Nächstes auf derselben Basis umgesetzt.
+- **Fenster:** rahmenlos (`set_decorated(false)`), Hintergrund Blau-Verlauf (`.window-bg`), zentrale Karte `.main-card` (`#151E3C`, 18 px Ecken, Rand + Schatten, blauer Glow oben rechts, zwei dekorative Wolken per cairo).
+- **Kopfzeile in der Karte:** lila Wolken-Logo + „Cloudsave“ (weiß, fett) links, lila Pill-Button „Jetzt synchronisieren“ (`.sync-btn`) rechts.
+- **Statusblock linksbündig:** Titel („Bereit“ / „Sync läuft“ / „Alles synchronisiert“, `.sync-title`), Unterzeile (`.sync-sub`, z. B. „143 Dateien gesichert · letzter Sync vor 2 Min“), Fortschrittsbalken (`.sync-progress`: Track transparent mit weißem Rahmen, Füllung weiß→lavender; pulsiert während des Syncs).
+- **Zwei Spalten (ca. 60/40):** links „Gesicherte Ordner“ als Kartenliste (Checkbox + Ordner-Icon + Ordnername, aus der Config befüllt), „Ordner hinzufügen“-Button (`.add-btn`, FileDialog), aufklappbarer „Einstellungen“-Bereich (Pfeil + `Revealer`: Sync-Rhythmus, Benachrichtigungen, Akku-Pause, Verbindung testen); rechts Ziel-Karte (`.target-card`: Ziel-Name + Pfad/Untertitel, Zeile „Automatisch synchronisieren“ + Schalter, persistiert in die Config).
+- **Farben (CSS in `crates/cloudsave-app/src/main.rs`):** Akzent Lila `#9D7CFF` über `accent_bg_color` (Button, Checkboxen, Schalter), Karten `rgba(255,255,255,0.055)`, `ColorScheme::ForceDark` erzwungen. Icons (Wolke/Ordner) werden per cairo in den Mockup-Farben gezeichnet.
 
 ## Umgesetzt (PR #4): Onboarding + Dashboard
 
-Der Flow ist in `crates/cloudsave-app/src/onboarding.rs` als `AdwNavigationView` umgesetzt: Welcome → Ordner wählen (Checkboxen für vorhandene Standardordner, „Anderer Ordner …“ via FileDialog) → Ziel wählen (lokal aktiv; Hetzner Storage Box als „folgt in M2“ deaktiviert) → Fertig (schreibt `~/.config/cloudsave/config.toml` und startet den ersten Sync). Ohne vorhandene Config startet die App im Onboarding, sonst direkt im Dashboard (`dashboard.rs`): „Jetzt synchronisieren“ läuft `cloudsave-core::sync` im Worker-Thread, Status-Banner + Stat-Karten aktualisieren sich aus dem SQLite-State, Ordner-Checkboxen persistieren in die Config.
+Der Flow ist in `crates/cloudsave-app/src/onboarding.rs` als `AdwNavigationView` umgesetzt: Welcome → Ordner wählen (Checkboxen für vorhandene Standardordner, „Anderer Ordner …“ via FileDialog) → Ziel wählen (lokal aktiv; Hetzner Storage Box als „folgt in M2“ deaktiviert) → Fertig (schreibt `~/.config/cloudsave/config.toml` und startet den ersten Sync). Ohne vorhandene Config startet die App im Onboarding, sonst direkt im Dashboard (`dashboard.rs`): „Jetzt synchronisieren“ läuft `cloudsave-core::sync` im Worker-Thread, Status-Titel/-zeile + Fortschrittsbalken aktualisieren sich aus dem SQLite-State, Ordner-Checkboxen persistieren in die Config.
