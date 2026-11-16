@@ -19,9 +19,6 @@ const CSS: &str = r#"
     background:
         radial-gradient(circle at 78% -12%, rgba(96, 165, 250, 0.40), rgba(59, 130, 246, 0.12) 42%, transparent 62%),
         #151E3C;
-    border-radius: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 24px 70px rgba(2, 6, 23, 0.55);
 }
 
 .app-title {
@@ -239,10 +236,6 @@ fn build_ui(app: &adw::Application) {
     card.add_css_class("main-card");
     card.set_halign(gtk::Align::Fill);
     card.set_valign(gtk::Align::Fill);
-    card.set_margin_top(36);
-    card.set_margin_bottom(36);
-    card.set_margin_start(44);
-    card.set_margin_end(44);
     root.append(&card);
 
     let overlay = gtk::Overlay::new();
@@ -256,6 +249,7 @@ fn build_ui(app: &adw::Application) {
     overlay.set_child(Some(&nav));
 
     let clouds = gtk::DrawingArea::new();
+    clouds.set_can_target(false);
     clouds.set_size_request(340, 180);
     clouds.set_halign(gtk::Align::End);
     clouds.set_valign(gtk::Align::Start);
