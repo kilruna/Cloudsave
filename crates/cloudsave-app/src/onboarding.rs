@@ -10,7 +10,7 @@ use cloudsave_core::{Config, Settings, Target};
 
 use crate::dashboard;
 
-pub fn build(window: &adw::ApplicationWindow, nav: &adw::NavigationView) {
+pub fn build(window: &gtk::Window, nav: &adw::NavigationView) {
     nav.push(&welcome_page(window, nav));
 }
 
@@ -57,7 +57,7 @@ fn page_content() -> gtk::Box {
     content
 }
 
-fn welcome_page(window: &adw::ApplicationWindow, nav: &adw::NavigationView) -> adw::NavigationPage {
+fn welcome_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::NavigationPage {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_vexpand(true);
     content.set_valign(gtk::Align::Center);
@@ -123,7 +123,7 @@ fn add_folder_row(
     });
 }
 
-fn folders_page(window: &adw::ApplicationWindow, nav: &adw::NavigationView) -> adw::NavigationPage {
+fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::NavigationPage {
     let checks: Rc<RefCell<Vec<(PathBuf, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
     let next = gtk::Button::with_label("Weiter");
     next.add_css_class("suggested-action");
@@ -199,7 +199,7 @@ fn folders_page(window: &adw::ApplicationWindow, nav: &adw::NavigationView) -> a
 }
 
 fn target_page(
-    window: &adw::ApplicationWindow,
+    window: &gtk::Window,
     nav: &adw::NavigationView,
     folders: Vec<PathBuf>,
 ) -> adw::NavigationPage {
@@ -280,7 +280,7 @@ fn target_page(
 }
 
 fn done_page(
-    window: &adw::ApplicationWindow,
+    window: &gtk::Window,
     nav: &adw::NavigationView,
     folders: Vec<PathBuf>,
     target: PathBuf,
