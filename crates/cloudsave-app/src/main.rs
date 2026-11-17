@@ -235,6 +235,7 @@ fn main() -> glib::ExitCode {
     let tray = std::rc::Rc::new(std::cell::RefCell::new(None));
     let startup_tray = tray.clone();
     app.connect_startup(move |app| {
+        gtk::Window::set_default_icon_name("org.cloudsave.Cloudsave");
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         if let Some(display) = gtk::gdk::Display::default() {
@@ -286,12 +287,15 @@ fn build_ui(app: &adw::Application, background: bool) {
     follow_window_controls(&header);
     header.add_css_class("cloudsave-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 14);
-    let mark = gtk::DrawingArea::new();
-    mark.set_size_request(44, 44);
+    let mark = match brand::texture() {
+        Ok(texture) => gtk::Image::from_paintable(Some(&texture)),
+        Err(error) => {
+            eprintln!("App-Icon nicht verfügbar: {error}");
+            gtk::Image::from_icon_name("org.cloudsave.Cloudsave")
+        }
+    };
+    mark.set_pixel_size(44);
     mark.set_can_target(false);
-    mark.set_draw_func(|_, cr, width, height| {
-        brand::paint(cr, f64::from(width), f64::from(height))
-    });
     mark.add_css_class("brand-mark");
     brand.append(&mark);
     let name = gtk::Label::new(Some("Cloudsave"));
@@ -336,6 +340,7 @@ fn build_ui(app: &adw::Application, background: bool) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) if config.settings.pending_recovery.is_some() => {
+            jobs::set_auto_sync(false);
             recovery::resume(window.upcast_ref(), &nav, &config);
         }
         Ok(config) => {

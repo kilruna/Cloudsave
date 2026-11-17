@@ -34,6 +34,12 @@ modules:
       - install -Dm755 target/release/cloudsave /app/bin/cloudsave
       - install -Dm644 data/org.cloudsave.Cloudsave.desktop /app/share/applications/org.cloudsave.Cloudsave.desktop
       - install -Dm644 data/org.cloudsave.Cloudsave.svg /app/share/icons/hicolor/scalable/apps/org.cloudsave.Cloudsave.svg
+      - |
+        for size in 32 48 64 128 256; do
+          icon_dir="/app/share/icons/hicolor/${size}x${size}/apps"
+          install -d "$icon_dir"
+          rsvg-convert -w "$size" -h "$size" -o "$icon_dir/org.cloudsave.Cloudsave.png" data/org.cloudsave.Cloudsave.svg
+        done
       - install -Dm644 data/org.cloudsave.Cloudsave.metainfo.xml /app/share/metainfo/org.cloudsave.Cloudsave.metainfo.xml
     sources:
       - type: dir

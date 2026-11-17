@@ -247,6 +247,7 @@ pub fn build(
     config: &Config,
     autostart: bool,
 ) -> gtk::Widget {
+    crate::jobs::set_auto_sync(config.settings.auto_sync);
     let config = Rc::new(RefCell::new(config.clone()));
     let state_path = Config::default_state_path();
 
@@ -598,6 +599,7 @@ pub fn build(
     {
         let config = config.clone();
         auto_switch.connect_active_notify(move |switch| {
+            crate::jobs::set_auto_sync(switch.is_active());
             config.borrow_mut().settings.auto_sync = switch.is_active();
             let _ = config.borrow().save(&Config::default_path());
         });
