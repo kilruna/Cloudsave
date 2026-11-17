@@ -1,6 +1,6 @@
 //! A persistent StatusNotifierItem for Plasma and other compatible panels.
 //! GIO dispatches all callbacks on GTK's main context; no second UI/sync thread.
-use crate::jobs;
+use crate::jobs::{self, TrayStatus};
 use adw::prelude::*;
 use gtk::{gio, glib};
 use gtk4 as gtk;
@@ -37,9 +37,9 @@ impl Tray {
             refresh: None,
         };
         let interfaces = gio::DBusNodeInfo::for_xml(include_str!("tray.xml"))?;
-        let pixmaps = Rc::new(icon_pixmaps()?);
-        let item_pixmaps = pixmaps.clone();
+        let pixmaps = icon_pixmaps()?;
         let menu_state = Rc::new(RefCell::new(MenuState::new()));
+        let item_state = menu_state.clone();
         let app_weak = app.downgrade();
         tray.item = Some(
             tray.connection
@@ -66,7 +66,10 @@ impl Tray {
                     }
                     invocation.return_value(None);
                 })
-                .property(move |_, _, _, _, property| item_property(property, &item_pixmaps))
+                .property(move |_, _, _, _, property| {
+                    let state = item_state.borrow();
+                    item_property(property, &pixmaps[&state.snapshot.status], &state.snapshot)
+                })
                 .build()?,
         );
         let app_weak = app.downgrade();
@@ -131,15 +134,29 @@ impl Tray {
                 let next = jobs::snapshot();
                 let mut state = menu_state.borrow_mut();
                 if state.snapshot != next {
+                    let icon_changed = state.snapshot.status != next.status;
+                    let menu_changed = state.snapshot.active != next.active
+                        || state.snapshot.recent != next.recent;
                     state.snapshot = next;
-                    state.revision = state.revision.wrapping_add(1);
-                    let _ = connection.emit_signal(
-                        None,
-                        MENU,
-                        "com.canonical.dbusmenu",
-                        "LayoutUpdated",
-                        Some(&(state.revision, 0i32).to_variant()),
-                    );
+                    if menu_changed {
+                        state.revision = state.revision.wrapping_add(1);
+                        let _ = connection.emit_signal(
+                            None,
+                            MENU,
+                            "com.canonical.dbusmenu",
+                            "LayoutUpdated",
+                            Some(&(state.revision, 0i32).to_variant()),
+                        );
+                    }
+                    if icon_changed {
+                        let _ = connection.emit_signal(
+                            None,
+                            ITEM,
+                            "org.kde.StatusNotifierItem",
+                            "NewIcon",
+                            None,
+                        );
+                    }
                     let _ = connection.emit_signal(
                         None,
                         ITEM,
@@ -174,18 +191,21 @@ impl Drop for Tray {
 
 type Pixmaps = Vec<(i32, i32, Vec<u8>)>;
 
-// Send pixels as well as the installed icon: the host's icon theme cannot see
-// icons inside every Flatpak, and a symbolic theme must not replace the brand.
-fn icon_pixmaps() -> Result<Pixmaps, glib::Error> {
-    let mut result = Vec::new();
-    for size in [24, 32, 48, 64] {
-        result.push((size, size, crate::brand::argb(size)?));
-    }
-
-    Ok(result)
+// The panel receives the actual badge pixels at each icon size.
+fn icon_pixmaps() -> Result<BTreeMap<TrayStatus, Pixmaps>, glib::Error> {
+    TrayStatus::ALL
+        .into_iter()
+        .map(|status| {
+            let pixmaps = [24, 32, 48, 64]
+                .into_iter()
+                .map(|size| crate::brand::argb(size, status).map(|pixels| (size, size, pixels)))
+                .collect::<Result<Pixmaps, _>>()?;
+            Ok((status, pixmaps))
+        })
+        .collect()
 }
 
-fn item_property(name: &str, pixmaps: &Pixmaps) -> glib::Variant {
+fn item_property(name: &str, pixmaps: &Pixmaps, snapshot: &jobs::Snapshot) -> glib::Variant {
     match name {
         "Category" => "SystemServices".to_variant(),
         "Id" => ID.to_variant(),
@@ -197,12 +217,13 @@ fn item_property(name: &str, pixmaps: &Pixmaps) -> glib::Variant {
         "OverlayIconPixmap" | "AttentionIconPixmap" => Pixmaps::new().to_variant(),
         "OverlayIconName" | "AttentionIconName" | "AttentionMovieName" => "".to_variant(),
         "ToolTip" => {
-            let snapshot = jobs::snapshot();
-            let text = snapshot
-                .active
-                .first()
-                .map(|entry| format!("{} · {}", entry.label, entry.detail))
-                .unwrap_or_else(|| "Keine aktiven Jobs".into());
+            let mut text = snapshot.status.label().to_owned();
+            if let Some(entry) = snapshot.active.first() {
+                text.push_str(&format!("\n{}", compact(entry)));
+                if snapshot.has_error {
+                    text.push_str("\nVorheriger Auftrag mit Fehlern");
+                }
+            }
             ("", pixmaps, "Cloudsave", text).to_variant()
         }
         // Plasma opens DBusMenu on a normal click rather than activating the window.

@@ -1,5 +1,5 @@
 //! Small, bounded session activity shared by workers and the tray. No GTK on workers.
-use cloudsave_core::{Progress, RestoreReport, SyncReport};
+use cloudsave_core::{Progress, RestoreReport, SyncReport, Target};
 use std::{
     collections::VecDeque,
     sync::{Mutex, OnceLock},
@@ -15,12 +15,68 @@ pub struct Entry {
 pub struct Snapshot {
     pub active: Vec<Entry>,
     pub recent: Vec<Entry>,
+    pub status: TrayStatus,
+    pub has_error: bool,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TrayStatus {
+    #[default]
+    Ready,
+    Busy,
+    Paused,
+    Error,
+    Success,
+}
+
+impl TrayStatus {
+    pub const ALL: [Self; 5] = [
+        Self::Ready,
+        Self::Busy,
+        Self::Paused,
+        Self::Error,
+        Self::Success,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ready => "Bereit · noch kein erfolgreicher Sync",
+            Self::Busy => "Datei-Auftrag läuft",
+            Self::Paused => "Automatische Synchronisierung pausiert",
+            Self::Error => "Fehler · Sicherung prüfen",
+            Self::Success => "Synchronisierung erfolgreich",
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     next: u64,
     active: Vec<Entry>,
     recent: VecDeque<Entry>,
+    auto_sync_paused: bool,
+    last_sync_succeeded: Option<bool>,
+    failed_restores: Vec<Target>,
+}
+
+impl State {
+    fn has_error(&self) -> bool {
+        self.last_sync_succeeded == Some(false) || !self.failed_restores.is_empty()
+    }
+
+    fn tray_status(&self) -> TrayStatus {
+        if !self.active.is_empty() {
+            TrayStatus::Busy
+        } else if self.has_error() {
+            TrayStatus::Error
+        } else if self.auto_sync_paused {
+            TrayStatus::Paused
+        } else if self.last_sync_succeeded == Some(true) {
+            TrayStatus::Success
+        } else {
+            TrayStatus::Ready
+        }
+    }
 }
 static OPERATIONS: Mutex<()> = Mutex::new(());
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
@@ -35,8 +91,20 @@ pub fn snapshot() -> Snapshot {
     Snapshot {
         active: state.active.clone(),
         recent: state.recent.iter().cloned().collect(),
+        status: state.tray_status(),
+        has_error: state.has_error(),
     }
 }
+
+pub fn set_auto_sync(enabled: bool) {
+    state().auto_sync_paused = !enabled;
+}
+
+enum Outcome<'a> {
+    Sync(bool),
+    Restore(&'a Target, bool),
+}
+
 #[must_use]
 pub struct Job {
     id: u64,
@@ -75,11 +143,21 @@ impl Job {
             entry.detail = detail;
         }
     }
-    pub fn finish(mut self, detail: String) {
-        self.complete(detail);
+    fn finish(mut self, detail: String, outcome: Outcome<'_>) {
+        self.complete(detail, Some(outcome));
     }
-    fn complete(&mut self, detail: String) {
+    fn complete(&mut self, detail: String, outcome: Option<Outcome<'_>>) {
         let mut state = state();
+        match outcome {
+            Some(Outcome::Sync(succeeded)) => state.last_sync_succeeded = Some(succeeded),
+            Some(Outcome::Restore(target, true)) => {
+                state.failed_restores.retain(|entry| entry != target)
+            }
+            Some(Outcome::Restore(target, false)) if !state.failed_restores.contains(target) => {
+                state.failed_restores.push(target.clone());
+            }
+            _ => {}
+        }
         if let Some(index) = state.active.iter().position(|entry| entry.id == self.id) {
             let mut entry = state.active.remove(index);
             let time = gtk4::glib::DateTime::now_local()
@@ -96,7 +174,7 @@ impl Job {
 impl Drop for Job {
     fn drop(&mut self) {
         if !self.finished {
-            self.complete("Abgebrochen".into());
+            self.complete("Abgebrochen".into(), None);
         }
     }
 }
@@ -120,10 +198,14 @@ pub fn sync(
         ),
         Err(error) => format!("Fehlgeschlagen: {error}"),
     };
-    job.finish(detail);
+    job.finish(
+        detail,
+        Outcome::Sync(result.as_ref().is_ok_and(|report| report.errors.is_empty())),
+    );
     result
 }
 pub fn restore(
+    target: &Target,
     task: impl FnOnce(&Job) -> cloudsave_core::Result<RestoreReport>,
 ) -> cloudsave_core::Result<RestoreReport> {
     let _operation = OPERATIONS.try_lock().map_err(|_| {
@@ -140,6 +222,12 @@ pub fn restore(
         ),
         Err(error) => format!("Fehlgeschlagen: {error}"),
     };
-    job.finish(detail);
+    job.finish(
+        detail,
+        Outcome::Restore(
+            target,
+            result.as_ref().is_ok_and(|report| report.errors.is_empty()),
+        ),
+    );
     result
 }

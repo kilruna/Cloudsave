@@ -8,7 +8,7 @@ mod restore;
 mod tray;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gdk::prelude::GdkCairoContextExt, glib};
 use gtk4 as gtk;
 use libadwaita as adw;
 
@@ -235,6 +235,7 @@ fn main() -> glib::ExitCode {
     let tray = std::rc::Rc::new(std::cell::RefCell::new(None));
     let startup_tray = tray.clone();
     app.connect_startup(move |app| {
+        gtk::Window::set_default_icon_name("org.cloudsave.Cloudsave");
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         if let Some(display) = gtk::gdk::Display::default() {
@@ -289,9 +290,14 @@ fn build_ui(app: &adw::Application, background: bool) {
     let mark = gtk::DrawingArea::new();
     mark.set_size_request(44, 44);
     mark.set_can_target(false);
-    mark.set_draw_func(|_, cr, width, height| {
-        brand::paint(cr, f64::from(width), f64::from(height))
-    });
+    match brand::pixbuf(128) {
+        Ok(cloud) => mark.set_draw_func(move |_, cr, width, height| {
+            cr.scale(f64::from(width) / 128.0, f64::from(height) / 128.0);
+            cr.set_source_pixbuf(&cloud, 0.0, 0.0);
+            let _ = cr.paint();
+        }),
+        Err(error) => eprintln!("App-Icon nicht verfügbar: {error}"),
+    }
     mark.add_css_class("brand-mark");
     brand.append(&mark);
     let name = gtk::Label::new(Some("Cloudsave"));
@@ -336,6 +342,7 @@ fn build_ui(app: &adw::Application, background: bool) {
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
         Ok(config) if config.settings.pending_recovery.is_some() => {
+            jobs::set_auto_sync(false);
             recovery::resume(window.upcast_ref(), &nav, &config);
         }
         Ok(config) => {

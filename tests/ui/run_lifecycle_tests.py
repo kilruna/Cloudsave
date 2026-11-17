@@ -125,6 +125,13 @@ def main():
     watcher = Watcher(connection)
     checks = []
 
+    def item_property(name):
+        return call(connection, ITEM, 'org.freedesktop.DBus.Properties', 'Get', '(ss)', (SNI, name))[0]
+
+    def wait_status(label):
+        eventually(lambda: item_property('ToolTip')[3].startswith(label))
+        return bytes(item_property('IconPixmap')[0][2])
+
     def passed(name):
         checks.append(name)
         print('PASS', name, flush=True)
@@ -181,12 +188,14 @@ def main():
                 try:
                     eventually(lambda: any('Synchronisierung' in label and 'Ordner werden geprüft' in label for label in menu_labels()), 10)
                     assert 'Keine aktiven Jobs' not in menu_labels()
+                    busy_icon = wait_status('Datei-Auftrag läuft')
                     passed('Tray shows an actual active sync while the real state database is busy')
                 finally:
                     database.rollback(); database.close()
                 eventually(lambda: (target/'Dokumente/hello.txt').exists() and
                            (target/'Dokumente/hello.txt').read_text() == 'updated while hidden', 12)
                 eventually(lambda: any('hochgeladen' in label for label in menu_labels()))
+                assert wait_status('Synchronisierung erfolgreich') != busy_icon
                 passed('Real automatic sync continues hidden and its result enters tray history')
             if cycle == 1:
                 call(connection, MENU, DBUSMENU, 'Event', '(isvu)', (1, 'clicked', GLib.Variant('i', 0), 0))
@@ -272,6 +281,38 @@ def main():
         assert (destination/'Archive/saved.txt').read_bytes() == b'saved'
         passed('Tray shows a real blocked download, then its successful byte-checked restore result')
     finally:
+        app.stop()
+
+    app = SessionUI('tray-status', folders=[], auto_sync=False)
+    source, working, broken = (app.root/name for name in ('source', 'backup', 'second-backup'))
+    source.mkdir()
+    (source/'save.txt').write_text('save data')
+    broken.write_text('a file cannot hold a backup')
+    app.write_config([source], [broken, working])
+    icons_changed = []
+    subscription = connection.signal_subscribe(APP, SNI, 'NewIcon', ITEM, None,
+        Gio.DBusSignalFlags.NONE, lambda *_: icons_changed.append(True))
+    try:
+        app.launch()
+        paused = wait_status('Automatische Synchronisierung pausiert')
+        app.set_active('GtkSwitch', True)
+        ready = wait_status('Bereit · noch kein erfolgreicher Sync')
+        eventually(lambda: len(icons_changed) >= 1)
+
+        app.click('Jetzt synchronisieren')
+        failure = wait_status('Fehler · Sicherung prüfen')
+        assert (working/'source/save.txt').read_text() == 'save data'
+
+        broken.unlink()
+        broken.mkdir()
+        app.click('Jetzt synchronisieren')
+        success = wait_status('Synchronisierung erfolgreich')
+        assert (broken/'source/save.txt').read_text() == 'save data'
+        eventually(lambda: len(icons_changed) >= 3)
+        assert len({ready, paused, busy_icon, failure, success}) == 5
+        passed('Tray icon changes across five states and only clears a failed sync after a successful retry')
+    finally:
+        connection.signal_unsubscribe(subscription)
         app.stop()
     return 0
 
