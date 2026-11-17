@@ -527,21 +527,47 @@ def backup_mode():
     finally:ui.stop()
 
 
+def open_exclusions(ui):
+    menu=ui.find('GtkMenuButton')
+    button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
+    ui.command('click',button['id']);time.sleep(.25)
+
+
 def exclusion_settings():
-    ui=UI('exclusion-settings');source,targets=fixture(ui)
+    ui=UI('exclusion-settings',exclude_patterns=['*.legacy']);source,targets=fixture(ui)
     (source/'old.tmp').write_text('keep existing backup')
+    def patterns():return tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns',[])
     try:
         ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Einstellungen')
-        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'*.tmp');ui.click('Ausschlüsse speichern')
-        saved=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp']
-        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'[');ui.click('Ausschlüsse speichern')
-        invalid_rejected=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp'] and any('Nicht gespeichert' in label for label in ui.labels())
-        (source/'old.tmp').unlink();(source/'new.tmp').write_text('ignore new file')
+        compact=not any(n['type']=='GtkTextView' and n['mapped'] for n in ui.tree())
+        open_exclusions(ui)
+        ui.set_active('GtkCheckButton',True,'Temporäre Dateien')
+        preset=set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        ui.set_active('GtkCheckButton',True,'Cache-Ordner')
+        cache=set(patterns())=={'*.legacy','*.tmp','*.temp','.cache','cache','Cache'}
+        ui.set_active('GtkCheckButton',False,'Cache-Ordner')
+        deselect=set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        ui.click('Eigene Regel hinzufügen …')
+        entry=ui.find('GtkEntry');ui.command('text',entry['id'],'[')
+        invalid_rejected=not ui.find('GtkButton','Regel hinzufügen')['sensitive'] and set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        entry=ui.find('GtkEntry');ui.command('text',entry['id'],'*.bak');ui.click('Regel hinzufügen')
+        custom=set(patterns())=={'*.legacy','*.tmp','*.temp','*.bak'}
+        open_exclusions(ui);ui.click('Eigene Regel hinzufügen …');ui.click('Abbrechen')
+        cancelled=set(patterns())=={'*.legacy','*.tmp','*.temp','*.bak'}
+        open_exclusions(ui)
+        label=ui.find('GtkLabel','*.legacy');row=ui.nodes[label['parent']]
+        remove=next(n for n in ui.descendants(row) if n['type']=='GtkButton' and n['label']=='Entfernen')
+        ui.command('click',remove['id']);time.sleep(.2)
+        removed=set(patterns())=={'*.tmp','*.temp','*.bak'}
+        run('xdotool','key','Escape');time.sleep(.2)
+        (source/'old.tmp').unlink();(source/'new.tmp').write_text('ignore new file');(source/'new.bak').write_text('ignore custom rule')
         ui.click('Jetzt synchronisieren');ui.idle()
-        record('UI-26','Exclusions validate and preserve existing excluded backups',saved and invalid_rejected and
-               all((target/'Documents/old.tmp').exists() and not (target/'Documents/new.tmp').exists() for target in targets),
-               f'Saved={saved}; invalid pattern rejected={invalid_rejected}',
-               'Invalid patterns do not replace saved rules; excluded backup files are retained')
+        safe=all((target/'Documents/old.tmp').exists() and not (target/'Documents/new.tmp').exists() and not (target/'Documents/new.bak').exists() for target in targets)
+        ui.stop();ui.launch();ui.idle();ui.click('Einstellungen');open_exclusions(ui)
+        persisted=ui.find('GtkCheckButton','Temporäre Dateien')['active']==1 and '*.bak' in ui.labels() and set(patterns())=={'*.tmp','*.temp','*.bak'}
+        record('UI-26','Clickable exclusions, custom rule validation and backup preservation',compact and preset and cache and deselect and invalid_rejected and custom and cancelled and removed and safe and persisted,
+               f'Compact={compact}; presets={preset and cache and deselect}; invalid blocked={invalid_rejected}; custom/cancel/remove={custom and cancelled and removed}; backup safety={safe}; persisted={persisted}',
+               'No typing needed for presets; custom dialog validates before saving; cancellation keeps rules; existing excluded backups stay',ui.snapshot('exclusion-presets'))
     finally:ui.stop()
 
 
@@ -549,7 +575,7 @@ def automatic_changes():
     ui=UI('automatic-changes',auto_sync=True,exclude_patterns=['*.tmp']);source,targets=fixture(ui)
     try:
         ui.launch();ui.idle()
-        ready=eventually(lambda:any('Änderungen werden automatisch erkannt' in label for label in ui.labels()))
+        ready=eventually(lambda:any('Live-Sync aktiv' in label for label in ui.labels()))
         original=(source/'save.txt').stat()
         (source/'save.txt').write_text('QA-SAVE-v2\n')
         os.utime(source/'save.txt',ns=(original.st_atime_ns,original.st_mtime_ns+1))
@@ -558,7 +584,7 @@ def automatic_changes():
         previous=(targets[0]/'Documents/save.txt').read_bytes()
         (source/'save.txt').write_text('manual-only after auto switch is disabled, even longer')
         time.sleep(4.5)
-        paused=all((target/'Documents/save.txt').read_bytes()==previous for target in targets)
+        paused=all((target/'Documents/save.txt').read_bytes()==previous for target in targets) and any('Live-Sync pausiert' in label for label in ui.labels())
         ui.click('Jetzt synchronisieren');ui.idle()
         record('UI-27','Filesystem events synchronize after debounce and respect auto OFF',ready and propagated and paused and
                all((target/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() for target in targets),
@@ -633,6 +659,59 @@ def endpoint_cards():
     finally:ui.stop()
 
 
+
+def native_header_layout():
+    ui=UI('native-header');source,targets=fixture(ui)
+    settings=ui.root/'config/gtk-4.0/settings.ini';settings.parent.mkdir(parents=True)
+    settings.write_text('[Settings]\ngtk-decoration-layout=icon,close:minimize,maximize\n')
+    try:
+        ui.launch();ui.idle()
+        header=ui.find('AdwHeaderBar');nodes=ui.descendants(header)
+        controls=[n for n in nodes if n['type']=='GtkWindowControls' and n['mapped']]
+        button_counts=[sum(n['type']=='GtkButton' and n['mapped'] for n in ui.descendants(control)) for control in controls]
+        icons=[]
+        for control in controls:
+            for n in ui.descendants(control):
+                if n['type'] not in ('GtkImage','GtkWindowIcon') or not n['mapped']:continue
+                parent=n['parent'];inside_button=False
+                while parent!=control['id'] and parent>=0:
+                    if ui.nodes[parent]['type']=='GtkButton':inside_button=True
+                    parent=ui.nodes[parent]['parent']
+                if not inside_button:icons.append(n)
+        brand=sum(n['type']=='GtkDrawingArea' and n['mapped'] for n in nodes)
+        record('UI-34','Native icon decoration does not duplicate the brand and preserves left/right controls',
+               button_counts==[1,2] and not icons and brand==1,
+               f'Left/right buttons={button_counts}; extra native icons={len(icons)}; brand marks={brand}',
+               'Desktop icon/menu decoration removed; close remains left and minimize/maximize remain right',ui.snapshot('native-icon-layout'))
+    finally:ui.stop()
+
+
+def exclusion_folder_picker():
+    ui=UI('exclusion-folder');source,targets=fixture(ui)
+    selected=source/'Cache [old]';selected.mkdir();(selected/'private.bin').write_bytes(b'not backed up')
+    similar=source/'Cache o';similar.mkdir();(similar/'keep.bin').write_bytes(b'keep this backup')
+    outside=ui.root/'not-a-source';outside.mkdir()
+    def choose(path):
+        open_exclusions(ui);ui.click('Ordner auswählen …')
+        run('xdotool','key','ctrl+l');time.sleep(.2)
+        entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(path));run('xdotool','key','Return')
+        if not eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in ui.tree()),3):ui.click('_Select')
+        time.sleep(.3)
+    try:
+        ui.launch();ui.idle();ui.click('Einstellungen')
+        choose(outside)
+        rejected=any('außerhalb' in text for text in ui.labels()) and not tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')
+        choose(selected)
+        patterns=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns',[])
+        ui.click('Jetzt synchronisieren');ui.idle()
+        exact=all(not (target/'Documents/Cache [old]/private.bin').exists() and
+                  (target/'Documents/Cache o/keep.bin').read_bytes()==b'keep this backup' for target in targets)
+        record('UI-35','Choose an excluded folder without typing patterns and escape literal names',rejected and patterns==['Cache [[]old[]]/**'] and exact,
+               f'Outside path rejected={rejected}; saved={patterns}; exact folder excluded in both targets={exact}',
+               'Picker creates a relative subtree rule; glob characters in folder names stay literal; unrelated data is still backed up',ui.snapshot('folder-rule'))
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -664,6 +743,8 @@ def main():
         automatic_changes()
         if BINARY:restore_ui()
         if BINARY:native_picker()
+        if BINARY:native_header_layout()
+        if BINARY:exclusion_folder_picker()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2
     total=len(RESULTS);failed=sum(r['status']=='FAIL' for r in RESULTS)

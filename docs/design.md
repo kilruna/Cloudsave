@@ -43,6 +43,8 @@ Unter 860 Pixeln wechseln Statusband, Kennzahlen und Inhaltsbereiche in eine
 vertikale Anordnung. Die gesamte Seite einschließlich Einstellungen kann
 vertikal gescrollt werden. Fokusrahmen erleichtern die Tastaturbedienung;
 Outline-Symbole werden direkt gezeichnet und hängen nicht vom Icon-Theme ab.
+Das zusätzliche App-Icon aus der Desktop-Fensterdekoration wird unterdrückt;
+die eingestellte Position und Reihenfolge der Fensterknöpfe bleibt erhalten.
 
 ![Unterer Bereich bei 560 Pixeln Fensterbreite](images/dashboard-orange-narrow.png)
 
@@ -51,3 +53,32 @@ Sync sowie ein tatsächlich auf 560 Pixel verkleinertes Fenster (UI-32).
 UI-33 prüft getrennte Endpunkt-Kacheln, die Position der Hinzufügen-Aktion,
 die gemeinsame Auto-Sync-Einstellung und die zielbezogene Verbindungsprüfung
 und Wiederherstellung mit zwei unterschiedlichen Testzielen.
+
+## Ausschlüsse und Live-Sync
+
+Die Einstellungen zeigen zunächst ein kompaktes Auswahlfeld. Ein Klick öffnet
+Standardgruppen für Cache-Ordner, temporäre Dateien und Ordner,
+System-Vorschaudateien und Entwicklungs-Caches. Jede Auswahl wird sofort
+gespeichert; bestehende eigene Regeln bleiben erhalten und lassen sich entfernen.
+Keine Gruppe ist ohne vorherige Auswahl aktiv.
+
+**Eigene Regel hinzufügen …** öffnet einen Dialog mit Validierung, beispielsweise
+für `*.bak` oder `Projekte/Cache/**`. **Ordner auswählen …** übernimmt einen
+Unterordner aus einer gesicherten Quelle ohne Mustereingabe. Sonderzeichen im
+gewählten Ordnernamen werden wörtlich behandelt. Die Regeln gelten relativ zu
+allen Quellordnern; vorhandene ausgeschlossene Sicherungen bleiben erhalten.
+
+![Kompaktes Auswahlfeld und zusätzlicher Kontrollscan](images/preferences-exclusions.png)
+
+Live-Sync verwendet die vorhandene Dateisystemüberwachung und startet nach etwa
+drei Sekunden Ruhezeit einen Sync. Die Oberfläche zeigt aktiv, pausiert oder
+eingeschränkt an. Das frühere Sync-Intervall heißt **Zusätzlicher Kontrollscan
+(Minuten)**: Es fängt verpasste Ereignisse auf und bestimmt nicht die Wartezeit
+der automatischen Änderungserkennung. Pro gebündeltem Lauf scannt die Engine
+weiterhin Dateimetadaten; übertragen werden nur geänderte Dateien.
+
+UI-26 prüft Standardgruppen, eigene Regeln, Validierung, Entfernen und Persistenz.
+UI-27 prüft reale automatische Dateiübertragungen und Pausieren. UI-34 erzwingt
+eine Desktop-Dekoration mit zusätzlichem Icon und unterschiedlich angeordneten
+Fensterknöpfen. UI-35 verwendet die native Ordnerauswahl, prüft ungültige Pfade
+und sichert, dass ein Ordner mit Glob-Sonderzeichen exakt ausgeschlossen wird.

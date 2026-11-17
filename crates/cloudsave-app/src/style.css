@@ -141,6 +141,16 @@ button:focus-visible, checkbutton:focus-visible, switch:focus-visible {
 .expander-btn label { font-size: 16px; font-weight: 700; color: #f4ece4; }
 .settings-body { padding: 0 22px 15px; }
 .settings-body .folder-row { padding: 14px 0; }
+.exclusion-select > button {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(123, 110, 97, 0.3), rgba(79, 70, 62, 0.35));
+    border: 1px solid rgba(229, 209, 188, 0.32);
+}
+.exclusion-select > button:hover {
+    border-color: rgba(255, 181, 102, 0.6);
+    box-shadow: 0 0 14px rgba(255, 141, 43, 0.1);
+}
 checkbutton check {
     border-radius: 6px;
     border-color: #8b8177;

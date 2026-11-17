@@ -82,6 +82,13 @@ card, and each restore action loads only that card's endpoint. Screenshot
 capture consumes window-destruction events between app launches, so reused X11
 IDs cannot silently suppress later screenshots.
 
+UI-34 forces a desktop decoration layout containing an application icon and
+window buttons on both sides. It verifies a single brand mark, no duplicate
+decoration icon, and preserved button positions. UI-35 uses the actual native
+folder chooser for exclusions: outside-source paths are rejected and a selected
+folder with glob metacharacters is excluded literally in both backup targets.
+The portal variant remains a manual installed-Flatpak check.
+
 | Finding | Fix and regression coverage |
 |---|---|
 | F1 | Persist per-file source ownership; mirror deletes only for selected, fully scanned sources. UI-14/15 plus Core tests for unavailable/deselected sources, partial scan permissions, restart, legacy migration, namespace collisions, and intentional deletes. |
@@ -108,8 +115,10 @@ portal and Wayland window operations requested by the report.
 
 UI-24 prüft einen nicht verfügbaren Schlüsselbund (Fehler sichtbar, keine neue
 Klartextdatei/Config). UI-25 prüft Backup-/Spiegelungsmodus über einen Neustart und
-zwei Ziele. UI-26 prüft Ausschlussmuster und ungültige Eingaben. UI-27 prüft echte
-Dateiänderungen mit automatischem Transfer und Auto-Sync AUS. UI-28 verwendet die
+zwei Ziele. UI-26 prüft anklickbare Ausschlussgruppen, eigene Regeln mit Validierung,
+Abbrechen, Entfernen und Persistenz nach Neustart sowie den Erhalt vorhandener
+ausgeschlossener Sicherungen. UI-27 prüft echte Dateiänderungen mit automatischem
+Transfer, angezeigten Live-Sync-Zustand und Auto-Sync AUS. UI-28 verwendet die
 Wiederherstellungsansicht und den tatsächlichen GTK-Zielordnerdialog für Unicode-
 Dateien und prüft den Schutz vorhandener Dateien.
 

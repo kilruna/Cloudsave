@@ -1,4 +1,5 @@
 mod dashboard;
+mod exclusion_picker;
 mod onboarding;
 mod restore;
 mod tray;
@@ -9,6 +10,38 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 const CSS: &str = include_str!("style.css");
+
+fn without_app_icon(layout: &str) -> String {
+    layout
+        .split(':')
+        .map(|side| {
+            side.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty() && !matches!(*item, "icon" | "menu" | "appmenu"))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn follow_window_controls(header: &adw::HeaderBar) {
+    if let Some(settings) = gtk::Settings::default() {
+        let layout = settings
+            .gtk_decoration_layout()
+            .unwrap_or_else(|| ":minimize,maximize,close".into());
+        header.set_decoration_layout(Some(&without_app_icon(&layout)));
+        let header = header.downgrade();
+        settings.connect_gtk_decoration_layout_notify(move |settings| {
+            if let Some(header) = header.upgrade() {
+                let layout = settings
+                    .gtk_decoration_layout()
+                    .unwrap_or_else(|| ":minimize,maximize,close".into());
+                header.set_decoration_layout(Some(&without_app_icon(&layout)));
+            }
+        });
+    }
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum Icon {
@@ -247,6 +280,7 @@ fn build_ui(app: &adw::Application, background: bool) {
     window.add_css_class("cloudsave-window");
     window.set_decorated(true);
     let header = adw::HeaderBar::new();
+    follow_window_controls(&header);
     header.add_css_class("cloudsave-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 14);
     let mark = icon(Icon::Cloud, 26, 1.0, 1.0, 1.0);
@@ -309,5 +343,22 @@ fn build_ui(app: &adw::Application, background: bool) {
 
     if !background {
         window.present();
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::without_app_icon;
+
+    #[test]
+    fn native_app_icons_are_removed_without_reordering_window_controls() {
+        for (layout, expected) in [
+            ("icon:minimize,maximize,close", ":minimize,maximize,close"),
+            ("menu,close:minimize,maximize", "close:minimize,maximize"),
+            ("close,minimize,maximize:", "close,minimize,maximize:"),
+            ("icon,menu,appmenu:close", ":close"),
+        ] {
+            assert_eq!(without_app_icon(layout), expected);
+        }
     }
 }
