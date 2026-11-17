@@ -30,6 +30,11 @@ Eine bereits laufende Instanz vorher über **Einstellungen → App beenden** sch
 Dieses Update erhält die vorhandene Konfiguration. Die Installation zeigt die
 angeforderten Berechtigungen an; Home wird für Ordnerliste und Quellen lesbar gemacht.
 
+Unter **Gesicherte Ordner** pausiert das Häkchen die Sicherung eines Ordners.
+Der Minus-Button entfernt ihn aus der Liste. Bei aktivem Live-Sync entfernt
+Cloudsave nach Bestätigung auch die zugeordneten Kopien an den Endpunkten.
+Die lokalen Originale bleiben erhalten.
+
 ### Kurzer Funktionstest
 
 1. **Einrichten:** Einen Ordner mit einigen Testdateien auswählen und einen anderen lokalen Ordner als Sicherungsziel wählen. Das Ziel darf nicht innerhalb der Quelle liegen. **Sync einrichten & starten** klicken und die gesicherten Dateiinhalte vergleichen.

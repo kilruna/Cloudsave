@@ -26,6 +26,16 @@ fn main() -> ExitCode {
             let state_path = Config::default_state_path();
             match sync(&config, &state_path) {
                 Ok(report) => {
+                    if !report.removed_folders.is_empty() {
+                        let result = Config::load(&config_path).and_then(|mut updated| {
+                            updated.finish_folder_removals(&report.removed_folders);
+                            updated.save(&config_path)
+                        });
+                        if let Err(error) = result {
+                            eprintln!("Ordnerentfernung konnte nicht gespeichert werden. {error}");
+                            return ExitCode::FAILURE;
+                        }
+                    }
                     println!(
                         "Sync fertig: {} hochgeladen ({} B), {} gelöscht, {} unverändert, {} Fehler",
                         report.uploaded, report.bytes, report.deleted, report.skipped, report.errors.len()

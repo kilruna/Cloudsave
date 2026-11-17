@@ -292,6 +292,9 @@ impl Job {
             Progress::Deleting { path, target } => {
                 format!("Spiegelung löscht: {} · {target}", path.display())
             }
+            Progress::RemovingFolder { name, target } => {
+                format!("Sicherungsordner entfernen: {name} · {target}")
+            }
         };
         if let Some(job) = state()
             .active

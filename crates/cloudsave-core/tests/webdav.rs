@@ -119,7 +119,11 @@ fn handle_conn_mode(
                 (201, "Created", None)
             }
             "DELETE" => {
-                let _ = fs::remove_file(&fs_path);
+                if fs_path.is_dir() {
+                    fs::remove_dir_all(&fs_path).unwrap();
+                } else {
+                    let _ = fs::remove_file(&fs_path);
+                }
                 (204, "No Content", None)
             }
             _ => (405, "Method Not Allowed", None),
@@ -490,4 +494,45 @@ fn transient_upload_failure_and_truncated_download_retry_the_whole_file() {
     assert_eq!(downloads.load(Ordering::Relaxed), 2);
     assert_eq!(fs::read(restored.join("source/game.dat")).unwrap(), payload);
     assert_eq!(fs::read_dir(restored.join("source")).unwrap().count(), 1);
+}
+
+#[test]
+fn explicit_live_removal_deletes_the_webdav_collection_only() {
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("Quelle");
+    let remote = temp.path().join("remote");
+    let state = temp.path().join("state.db");
+    fs::create_dir_all(source.join("Unter")).unwrap();
+    fs::write(source.join("Unter/test.txt"), b"owned backup").unwrap();
+    fs::create_dir_all(remote.join("base/Andere")).unwrap();
+    fs::write(remote.join("base/Andere/keep"), b"other source").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/base", listener.local_addr().unwrap());
+    let server_root = remote.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            handle_conn(stream, &server_root);
+        }
+    });
+    let mut config = Config {
+        folders: vec![source.clone()],
+        targets: vec![Target::Webdav {
+            url,
+            user: "qa".into(),
+        }],
+        settings: Settings::default(),
+    };
+    assert!(sync(&config, &state).unwrap().errors.is_empty());
+    config.remove_folder(&source).unwrap();
+    let report = sync(&config, &state).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.deleted, 1);
+    assert_eq!(report.removed_folders.len(), 1);
+    assert!(!remote.join("base/Quelle").exists());
+    assert_eq!(
+        fs::read(remote.join("base/Andere/keep")).unwrap(),
+        b"other source"
+    );
+    assert!(source.join("Unter/test.txt").exists());
 }

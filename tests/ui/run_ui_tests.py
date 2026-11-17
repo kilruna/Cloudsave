@@ -821,6 +821,50 @@ def recovery_conflict_and_failure():
 
 
 
+def folder_removal():
+    app = UI('folder-removal')
+    source = app.root/'Dokumente'
+    other = app.root/'Bilder'
+    targets = [app.root/'backup-one', app.root/'backup-two']
+    for path in [source, other]:
+        path.mkdir()
+        (path/'fixture.txt').write_text(path.name)
+    app.write_config([source, other], targets)
+
+    def remove_button(name):
+        label = app.find('GtkLabel', name)
+        row = app.nodes[app.nodes[label['parent']]['parent']]
+        button = next(node for node in app.descendants(row) if node['type'] == 'GtkButton')
+        app.command('click', button['id'])
+
+    try:
+        app.launch(); app.click('Jetzt synchronisieren'); assert app.idle()
+        remove_button('Bilder')
+        assert eventually(lambda: 'Bilder' not in app.labels())
+        assert all((target/'Bilder/fixture.txt').is_file() for target in targets)
+
+        app.set_active('GtkSwitch', True)
+        app.set_active('GtkCheckButton', False)
+        remove_button('Dokumente')
+        app.click('Abbrechen')
+        assert 'Dokumente' in app.labels()
+        assert all((target/'Dokumente/fixture.txt').is_file() for target in targets)
+        remove_button('Dokumente')
+        app.click('Ordner und Kopien entfernen')
+        assert eventually(lambda: all(not (target/'Dokumente').exists() for target in targets))
+        assert app.idle()
+        assert 'Dokumente' not in app.labels()
+        config = tomllib.loads(app.cfg.read_text())
+        assert not config['folders'] and not config['settings'].get('pending_folder_removals')
+        assert all((path/'fixture.txt').is_file() for path in (source, other))
+        assert all((target/'Bilder/fixture.txt').is_file() for target in targets)
+        record('UI-40', 'Remove tracked folders safely from the dashboard', True,
+               'Cancel preserves both copies; accepted live removal deletes both target folders',
+               'Paused sync preserves backups and both local originals remain byte-for-byte')
+    finally:
+        app.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -850,6 +894,7 @@ def main():
         backup_mode()
         exclusion_settings()
         automatic_changes()
+        folder_removal()
         if BINARY:restore_ui()
         if BINARY:native_picker()
         if BINARY:native_header_layout()
