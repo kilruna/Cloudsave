@@ -65,6 +65,7 @@ private Pfade in Meldungen oder Screenshots bitte schwärzen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
 - **Sichere Zugangsdaten:** Passwörter liegen im System-Schlüsselbund. Alte Passwortdateien werden nach erfolgreicher Übernahme entfernt.
+- **Wiederherstellung nach Neuinstallation:** Auf dem Startbildschirm **Vorhandene Sicherung wiederherstellen** wählen, das bisherige lokale Ziel oder die WebDAV-Zugangsdaten angeben und den Endpunkt prüfen lassen. Gefundene Sicherungsdateien lassen sich samt Ordnerstruktur in einen gewählten lokalen Ordner zurückholen. Dafür ist keine alte Cloudsave-Konfiguration oder Zustandsdatenbank nötig.
 - **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`). Mit aktivierter Hintergrundoption verbirgt **×** das Fenster; das Symbol im Systemabschnitt bleibt auch bei geöffnetem Fenster verfügbar. Ein Klick oder **Cloudsave öffnen** im Symbolmenü öffnet dasselbe Fenster wieder. **Beenden** im Symbolmenü oder **App beenden** in den Einstellungen beendet die App vollständig. Ohne Hintergrundoption beendet bereits **×** die App.
 - **Ressourcenschonend:** Datei-Ereignisse lösen gebündelte Syncs aus; ein geplanter Scan dient als Fallback. Übertragungen laufen außerhalb des UI-Threads.
 
@@ -73,9 +74,25 @@ unterstützt. Bei GNOME ist dafür eine AppIndicator-/StatusNotifier-Erweiterung
 erforderlich. Ohne passenden Systemabschnitt lässt sich ein verborgenes Fenster
 über den App-Starter erneut öffnen.
 
+Bei jeder Endpunkt-Einrichtung prüft Cloudsave vor dem ersten Sync, ob bereits
+Sicherungsdateien vorhanden sind, und bietet gegebenenfalls die Wiederherstellung
+an. Bei Zugriffsfehlern bleibt die Einrichtung offen und kann erneut versucht
+werden. Vorhandene lokale Dateien werden beim Wiederherstellen nicht
+überschrieben. Wähle etwa dein Home-Verzeichnis als Wiederherstellungsordner,
+damit `Documents/datei.txt` wieder unter `~/Documents/datei.txt` landet.
+Zurückgeholte Ordner werden als Quellen eingetragen; Auto-Sync bleibt zunächst
+ausgeschaltet. Prüfe die Dateien und aktiviere ihn anschließend nach Bedarf.
+Die Wiederherstellung umfasst die gesicherten Dateien und deren Ordnerstruktur;
+frühere App-Einstellungen werden dabei nicht aus dem Sicherungsziel rekonstruiert.
+
 ## Ziele (Protokolle)
 
 Verfügbar: **WebDAV (HTTPS)** – z. B. Hetzner Storage Box (`https://uXXXXX.your-storagebox.de`), Nextcloud, ownCloud – sowie **lokale Ordner / USB-Laufwerke**. Geplant: SFTP, SSH (rsync), FTP(S), S3-kompatibler Object Storage (z. B. Hetzner Object Storage), BorgBackup. Details und Priorisierung siehe [docs/protocols.md](docs/protocols.md).
+
+Bei der WebDAV-Einrichtung wird eine Serveradresse ohne Protokoll automatisch um
+`https://` ergänzt. Die URL wird vor dem Fortfahren geprüft; ausdrücklich
+angegebenes HTTP oder andere Protokolle werden abgewiesen. Ein Verbindungstest
+ist optional.
 
 ## Technik
 

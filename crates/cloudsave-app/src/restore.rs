@@ -5,13 +5,14 @@ use gtk4 as gtk;
 use libadwaita as adw;
 use std::{
     cell::{Cell, RefCell},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::mpsc,
     time::Duration,
 };
 
 type Files = Rc<RefCell<Vec<(BackupFile, gtk::CheckButton)>>>;
+type Restored = Rc<dyn Fn(&Path, &[BackupFile]) -> cloudsave_core::Result<()>>;
 
 fn background<T: Send + 'static>(
     task: impl FnOnce() -> cloudsave_core::Result<T> + Send + 'static,
@@ -52,6 +53,27 @@ fn update_action(
 }
 
 pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
+    build_page(window, targets, None)
+}
+
+pub fn setup_page(
+    window: &gtk::Window,
+    target: &Target,
+    restored: impl Fn(&Path, &[BackupFile]) -> cloudsave_core::Result<()> + 'static,
+) -> adw::NavigationPage {
+    build_page(
+        window,
+        std::slice::from_ref(target),
+        Some(Rc::new(restored)),
+    )
+}
+
+fn build_page(
+    window: &gtk::Window,
+    targets: &[Target],
+    on_restored: Option<Restored>,
+) -> adw::NavigationPage {
+    let setup = on_restored.is_some();
     let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
     root.set_margin_top(20);
     root.set_margin_bottom(20);
@@ -164,6 +186,7 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
                                     "{} · {size}",
                                     file.path.display()
                                 ));
+                                check.set_active(setup);
                                 let weak_files = Rc::downgrade(&files);
                                 let destination = destination.clone();
                                 let loaded = loaded.clone();
@@ -270,16 +293,26 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
             let busy = busy.clone();
             let button = button.clone();
             let status = status.clone();
+            let on_restored = on_restored.clone();
+            let completed_files = selection.clone();
+            let completed_destination = destination_path.clone();
             background(
                 move || cloudsave_core::restore_files(&target, &selection, &destination_path),
                 move |result| {
                     busy.set(false);
                     root.set_sensitive(true);
                     match result {
-                        Ok(report) if report.errors.is_empty() => status.set_text(&format!(
-                            "{} Datei(en) wiederhergestellt · {} B",
-                            report.restored, report.bytes
-                        )),
+                        Ok(report) if report.errors.is_empty() => {
+                            status.set_text(&format!(
+                                "{} Datei(en) wiederhergestellt · {} B",
+                                report.restored, report.bytes
+                            ));
+                            if let Some(done) = &on_restored {
+                                if let Err(error) = done(&completed_destination, &completed_files) {
+                                    status.set_text(&format!("Dateien wiederhergestellt, aber Einrichtung konnte nicht abgeschlossen werden: {error}"));
+                                }
+                            }
+                        }
                         Ok(report) => status.set_text(&format!(
                             "{} Datei(en) wiederhergestellt · {} Fehler:\n{}",
                             report.restored,
@@ -301,5 +334,8 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
     header.set_show_end_title_buttons(false);
     toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&root));
+    if setup {
+        load.emit_clicked();
+    }
     adw::NavigationPage::new(&toolbar, "Sicherungen wiederherstellen")
 }

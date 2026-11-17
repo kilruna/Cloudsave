@@ -270,7 +270,7 @@ def onboarding():
             typ='AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow'
             n=ui.find(typ,title);ui.command('text',n['id'],value)
         validations=[]
-        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('https://example.com/dav',True)]:
+        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('example.com',True),('example.com:8443/dav',True),('example.com:invalid',False),('https://example.com/dav',True)]:
             n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],url)
             validations.append(bool(ui.find('GtkButton','Weiter')['sensitive'])==valid)
         n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],'not a url')
@@ -434,11 +434,13 @@ def native_picker():
             n=ui.find('AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow',title)
             ui.command('text',n['id'],value)
         invalid_blocked=not ui.find('GtkButton','Hinzufügen')['sensitive']
+        entry=ui.find('AdwEntryRow','Server-URL');ui.command('text',entry['id'],'example.com/dav')
+        bare_accepted=bool(ui.find('GtkButton','Hinzufügen')['sensitive'])
         choose_native_folder(ui,extra)
         ui.click('Hinzufügen')
         config=tomllib.loads(ui.cfg.read_text())
         ui.click('Jetzt synchronisieren');ui.idle()
-        record('UI-21','Add endpoint reuses validation and native chooser',invalid_blocked and
+        record('UI-21','Add endpoint reuses validation and native chooser',invalid_blocked and bare_accepted and
                [t['path'] for t in config['targets']]==[str(second),str(extra)] and
                (extra/'Dokumente/save.txt').read_bytes()==(source/'save.txt').read_bytes() and len(window_controls(ui))==1,
                f'Malformed URL blocked={invalid_blocked}; targets={config["targets"]}',
@@ -465,12 +467,14 @@ def unavailable_keyring():
     with UI('unavailable-keyring', home_dirs=('Documents',)) as ui:
         ui.click('Einrichtung starten');ui.set_active('GtkCheckButton',True);ui.click('Weiter')
         ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
-        for title,value in [('Benutzername','synthetic-qa'),('Server-URL','https://example.invalid'),('Passwort','not-a-real-password')]:
+        for title,value in [('Benutzername','synthetic-qa'),('Server-URL','example.invalid'),('Passwort','not-a-real-password')]:
             entry=ui.find('AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow',title)
             ui.command('text',entry['id'],value)
-        ui.click('Weiter');ui.set_active('GtkSwitch',False);ui.click('Sync einrichten & starten')
+        ui.click('Weiter')
+        normalized=any('https://example.invalid' in text for text in ui.labels())
+        ui.set_active('GtkSwitch',False);ui.click('Sync einrichten & starten')
         shown=eventually(lambda:any('System-Schlüsselbund' in text for text in ui.labels()))
-        record('UI-24','Keyring failure keeps setup open and does not persist plaintext',shown and
+        record('UI-24','Keyring failure keeps setup open and does not persist plaintext',shown and normalized and
                not ui.cfg.exists() and not list((ui.root/'config').rglob('*.secret')) and
                bool(ui.find('GtkButton','Sync einrichten & starten')['sensitive']),
                'Keyring unavailable on isolated bus; setup can retry',
@@ -559,6 +563,93 @@ def restore_ui():
     finally:ui.stop()
 
 
+
+def choose_restore_folder(ui, destination):
+    ui.click('Wiederherstellungsordner wählen …')
+    run('xdotool','key','ctrl+l');time.sleep(.2)
+    entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(destination))
+    run('xdotool','key','Return')
+    if not eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in ui.tree()),3):
+        ui.click('_Select')
+
+
+def recovery_from_fresh_install():
+    with UI('fresh-install-recovery') as ui:
+        target=ui.root/'old-backup'
+        (target/'Documents/nested').mkdir(parents=True)
+        payload=b'old system backup'
+        (target/'Documents/save.txt').write_bytes(payload)
+        (target/'Documents/nested/ümlaut.txt').write_text('Unicode ✓')
+        ui.click('Vorhandene Sicherung wiederherstellen')
+        choose_native_folder(ui,target);ui.click('Weiter')
+        ui.set_active('GtkSwitch',False);ui.click('Endpunkt prüfen & einrichten')
+        offered=eventually(lambda:any('2 vorhandene Sicherungsdatei(en)' in text for text in ui.labels()))
+        config=tomllib.loads(ui.cfg.read_text())
+        paused=not config['settings']['auto_sync'] and config['folders']==[]
+        untouched=(target/'Documents/save.txt').read_bytes()==payload
+        ui.click('Vorhandene Daten wiederherstellen')
+        eventually(lambda:any('Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
+        checks=[n for n in ui.tree() if n['type']=='GtkCheckButton' and n['mapped']]
+        selected=len(checks)==2 and all(n['active'] for n in checks)
+        choose_restore_folder(ui,ui.root/'home');ui.click('Wiederherstellen')
+        restored=eventually(lambda:(ui.root/'home/Documents/nested/ümlaut.txt').exists())
+        ui.idle()
+        config=tomllib.loads(ui.cfg.read_text())
+        resumed=config['folders']==[str(ui.root/'home/Documents')] and not config['settings']['auto_sync']
+        exact=restored and (ui.root/'home/Documents/save.txt').read_bytes()==payload and (ui.root/'home/Documents/nested/ümlaut.txt').read_text()=='Unicode ✓'
+        ui.stop();ui.launch();ui.idle()
+        (ui.root/'home/Documents/save.txt').write_text('manual change after recovery')
+        time.sleep(4)
+        no_auto_write=(target/'Documents/save.txt').read_bytes()==payload
+        ui.click('Jetzt synchronisieren');ui.idle()
+        manual=(target/'Documents/save.txt').read_text()=='manual change after recovery'
+        record('UI-29','Fresh install discovers and restores backup without old config or source folders',
+               offered and paused and untouched and selected and exact and resumed and no_auto_write and manual,
+               f'Offered={offered}; paused={paused}; selected all={selected}; exact={exact}; sources restored={resumed}; paused after restart={no_auto_write}; manual sync={manual}',
+               'Recover folder hierarchy from target; persist recovered sources with auto-sync OFF; explicit sync works',ui.snapshot('recovered-system'))
+
+
+def setup_detects_existing_backup():
+    with UI('setup-existing',home_dirs=('Documents',)) as ui:
+        source=ui.root/'home/Documents';(source/'save.txt').write_text('new local state')
+        target=ui.root/'backup';(target/'Documents').mkdir(parents=True)
+        (target/'Documents/save.txt').write_text('old backup')
+        ui.click('Einrichtung starten');ui.set_active('GtkCheckButton',True,'Documents');ui.click('Weiter')
+        choose_native_folder(ui,target);ui.click('Weiter');ui.set_active('GtkSwitch',False);ui.click('Sync einrichten & starten')
+        offered=eventually(lambda:any('1 vorhandene Sicherungsdatei(en)' in text for text in ui.labels()))
+        config=tomllib.loads(ui.cfg.read_text())
+        safe=(target/'Documents/save.txt').read_text()=='old backup' and not config['settings']['auto_sync']
+        ui.click('Ohne Wiederherstellung fortfahren');ui.idle()
+        explicit=(target/'Documents/save.txt').read_text()=='new local state'
+        record('UI-30','Normal setup checks existing data before any first sync',offered and safe and explicit,
+               f'Offered={offered}; existing content protected={safe}; explicit continue synced={explicit}',
+               'Pause on existing data; only an explicit continue permits the first sync',ui.snapshot('continued-setup'))
+
+
+def add_target_discovery_and_retry():
+    ui=UI('add-target-discovery');source,targets=fixture(ui)
+    target=ui.root/'existing-backup';(target/'Archive').mkdir(parents=True)
+    (target/'Archive/old.txt').write_text('preserve existing data')
+    try:
+        ui.launch();ui.idle();ui.click('Weiteren Endpunkt hinzufügen')
+        choose_native_folder(ui,target)
+        unavailable=ui.root/'unavailable';target.rename(unavailable)
+        ui.click('Hinzufügen')
+        failed=eventually(lambda:any('Sicherungsziel nicht gefunden' in text for text in ui.labels()))
+        unchanged=len(tomllib.loads(ui.cfg.read_text())['targets'])==2
+        unavailable.rename(target);ui.click('Hinzufügen')
+        offered=eventually(lambda:any('1 vorhandene Sicherungsdatei(en)' in text for text in ui.labels()))
+        config=tomllib.loads(ui.cfg.read_text())
+        paused=len(config['targets'])==3 and not config['settings']['auto_sync']
+        ui.click('Vorhandene Daten wiederherstellen')
+        loaded=eventually(lambda:any('1 Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
+        record('UI-31','Adding endpoint distinguishes unavailable from empty and offers existing backups',
+               failed and unchanged and offered and paused and loaded and (target/'Archive/old.txt').read_text()=='preserve existing data',
+               f'Failed safely={failed and unchanged}; retry discovered={offered}; paused={paused}; new target loaded={loaded}',
+               'Do not save an unreadable endpoint; retry; restore uses only the newly added target',ui.snapshot('add-discovered'))
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -590,6 +681,9 @@ def main():
         automatic_changes()
         if BINARY:restore_ui()
         if BINARY:native_picker()
+        if BINARY:recovery_from_fresh_install()
+        if BINARY:setup_detects_existing_backup()
+        if BINARY:add_target_discovery_and_retry()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2
     total=len(RESULTS);failed=sum(r['status']=='FAIL' for r in RESULTS)

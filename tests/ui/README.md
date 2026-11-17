@@ -66,6 +66,14 @@ and stderr logs. The generated bridge library is ignored by Git.
 
 ## Coverage and remaining manual checks
 
+The Rust workflow runs this suite in its `GTK regressions (issue 10)` job
+against a newly built native executable on Debian 13. Xvfb provides X11;
+`unshare --net` isolates the test process from external networking. The job
+uploads JSON results, screenshots, widget trees and logs as
+`gtk-regression-results`, including on failures. A test failure or harness
+error fails the job. This complements the separate lifecycle suite and does
+not certify the installed Flatpak, portal grants or native Wayland behavior.
+
 | Finding | Fix and regression coverage |
 |---|---|
 | F1 | Persist per-file source ownership; mirror deletes only for selected, fully scanned sources. UI-14/15 plus Core tests for unavailable/deselected sources, partial scan permissions, restart, legacy migration, namespace collisions, and intentional deletes. |
@@ -74,7 +82,7 @@ and stderr logs. The generated bridge library is ignored by Git.
 | F4 | Normal startup honors `auto_sync`; explicit setup still starts its first sync. UI-09/11/20. |
 | F5 | Complete errors, source/target paths, and retry guidance are visible and selectable; error progress resets. UI-16, Core destination-write and HTTP-401 tests. |
 | F6 | Core rejects empty targets; UI shows setup required and disables sync. UI-17 and Core empty-target/valid-empty-source tests. |
-| F7 | Parse URL and require HTTPS/host; inline errors; no mandatory live connection test. UI-07/21 and Core syntax table. |
+| F7 | Complete scheme-less URLs with HTTPS, then validate host/port/path; inline errors; no mandatory live connection test. UI-07/21/24 and Core syntax/normalization tables. |
 | F8 | Page headers hide their window controls and keep back/title navigation; application titlebar owns controls. UI-02/19/21. |
 
 Legacy state has no source ownership. Unknown entries are conservatively retained;
@@ -106,6 +114,19 @@ cargo test -p cloudsave-core system_keyring_roundtrip -- --ignored
 
 Die normalen Core-Tests ersetzen für Migration/Fehler nur den Credential-Store;
 Sync-/Restore-Dateioperationen und die lokalen HTTP-/Dateisystemtests sind echt.
+
+## Wiederherstellung nach Neuinstallation
+
+Im nativen Modus prüft UI-29 den vollständigen Weg vom frischen Profil ohne
+Quellordner über die Endpunkt-Erkennung bis zur bytegenauen Wiederherstellung
+einschließlich Unicode und Unterordnern. Nach einem Neustart bleibt Auto-Sync
+ausgeschaltet; ein manueller Sync mit den wiederhergestellten Quellen funktioniert.
+UI-30 prüft, dass auch das normale Erstsetup vor dem ersten Upload vorhandene
+Daten erkennt und eine ausdrückliche Entscheidung abwartet. UI-31 prüft beim
+Hinzufügen eines Endpunktes einen fehlgeschlagenen Zugriff, die Wiederholung und
+das Laden ausschließlich des neu hinzugefügten Ziels zur Wiederherstellung.
+Der Core-Test `restore_on_a_fresh_system_needs_only_the_backup_target` entfernt
+Quelle, Konfiguration und SQLite-Zustand vor der Wiederherstellung vollständig.
 
 ## Fenster und Systemabschnitt
 

@@ -5,6 +5,42 @@ use std::{
 };
 
 #[test]
+fn restore_on_a_fresh_system_needs_only_the_backup_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let old_home = tmp.path().join("old-home");
+    let source = old_home.join("Documents");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("nested/ältere Datei.txt"), b"previous system").unwrap();
+    let target = Target::Local {
+        path: tmp.path().join("backup"),
+    };
+    let config_path = old_home.join("config.toml");
+    let state_path = old_home.join("state.db");
+    let config = Config {
+        folders: vec![source],
+        targets: vec![target.clone()],
+        settings: Settings::default(),
+    };
+    config.save(&config_path).unwrap();
+    assert_eq!(sync(&config, &state_path).unwrap().uploaded, 1);
+    fs::remove_dir_all(&old_home).unwrap();
+    let files = list_backups(&target).unwrap();
+    assert_eq!(files.len(), 1);
+    let home = tmp.path().join("new-home");
+    fs::create_dir(&home).unwrap();
+    let report = restore_files(&target, &files, &home).unwrap();
+    assert_eq!(report.restored, 1);
+    assert!(report.errors.is_empty());
+    assert_eq!(
+        fs::read(home.join("Documents/nested/ältere Datei.txt")).unwrap(),
+        b"previous system"
+    );
+    assert!(!old_home.exists());
+    // Listing/restoring does not adopt or modify the remote inventory.
+    assert_eq!(list_backups(&target).unwrap(), files);
+}
+
+#[test]
 fn restore_roundtrip_keeps_unicode_and_never_overwrites_existing_files() {
     let tmp = tempfile::tempdir().unwrap();
     let source = tmp.path().join("Documents");

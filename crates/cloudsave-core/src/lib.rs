@@ -19,7 +19,7 @@ pub use restore::{list_backups, restore_files, BackupFile, RestoreReport};
 pub use secrets::{load_password, save_password};
 pub use state::State;
 pub use watch::{ChangeWatcher, WatchConfig, WatchEvent};
-pub use webdav::{validate_webdav_url, WebdavBackend};
+pub use webdav::{normalize_webdav_url, validate_webdav_url, WebdavBackend};
 
 #[derive(Debug)]
 pub struct Error(pub String);

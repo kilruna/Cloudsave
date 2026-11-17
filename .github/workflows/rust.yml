@@ -78,3 +78,43 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-deny
       - run: cargo deny check
+
+  ui:
+    name: GTK regressions (issue 10)
+    runs-on: ubuntu-latest
+    # Debian 13 supplies GTK >= 4.18 and libadwaita >= 1.7.
+    container:
+      image: debian:13
+      # Required only to isolate the native test process from external networking.
+      options: --cap-add=SYS_ADMIN
+    steps:
+      - name: Native build and GTK test dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libgtk-4-dev libadwaita-1-dev python3-gi gir1.2-gtk-3.0 \
+            xvfb xauth xdotool x11-utils util-linux
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ui-debian-13
+      - name: Build native app
+        run: cargo build -p cloudsave-app --locked
+      - name: Issue 10 regressions (isolated profiles and network)
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cloudsave-ui-regressions"
+          TMPDIR="$RUNNER_TEMP/cloudsave-ui-regressions" GSK_RENDERER=cairo \
+            unshare --net -- xvfb-run -a \
+            /usr/bin/python3 tests/ui/run_ui_tests.py \
+            --binary target/debug/cloudsave --output "$RUNNER_TEMP/cloudsave-ui-results"
+      - name: UI regression evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gtk-regression-results
+          path: ${{ runner.temp }}/cloudsave-ui-results
+          retention-days: 7

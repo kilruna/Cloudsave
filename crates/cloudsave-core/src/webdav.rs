@@ -39,6 +39,21 @@ pub fn validate_webdav_url(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Complete a scheme-less setup address with HTTPS and validate it without network access.
+pub fn normalize_webdav_url(value: &str) -> Result<String> {
+    let value = value.trim();
+    if value.starts_with('/') || value.contains('\\') {
+        return Err(Error("Bitte eine gültige Server-URL eingeben.".into()));
+    }
+    let url = if value.contains("://") {
+        value.to_string()
+    } else {
+        format!("https://{value}")
+    };
+    validate_webdav_url(&url)?;
+    Ok(url)
+}
+
 fn url_encode_segment(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -370,7 +385,48 @@ fn parse_listing(
 
 #[cfg(test)]
 mod validation_tests {
-    use super::validate_webdav_url;
+    use super::{normalize_webdav_url, validate_webdav_url};
+
+    #[test]
+    fn setup_completes_missing_https_and_preserves_server_port_and_path() {
+        for (value, expected) in [
+            ("cloud.example.com", "https://cloud.example.com"),
+            (
+                " u123.your-storagebox.de ",
+                "https://u123.your-storagebox.de",
+            ),
+            (
+                "cloud.example.com:8443/remote.php/dav/files/user/",
+                "https://cloud.example.com:8443/remote.php/dav/files/user/",
+            ),
+            ("[::1]:8443/dav", "https://[::1]:8443/dav"),
+            (
+                " https://cloud.example.com/dav/ ",
+                "https://cloud.example.com/dav/",
+            ),
+        ] {
+            assert_eq!(normalize_webdav_url(value).unwrap(), expected);
+        }
+        for value in [
+            "",
+            "  ",
+            "not a url",
+            "https://",
+            "http://example.com",
+            "ftp://example.com",
+            "file:///tmp",
+            "https://user:password@example.com",
+            "user:password@example.com",
+            "example.com?query=1",
+            "example.com/#fragment",
+            "/example.com",
+            "//example.com",
+            r"https:\example.com",
+            "example.com:invalid",
+        ] {
+            assert!(normalize_webdav_url(value).is_err(), "{value:?}");
+        }
+    }
 
     #[test]
     fn setup_accepts_only_valid_https_endpoints() {

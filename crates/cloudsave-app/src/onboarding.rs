@@ -98,6 +98,15 @@ fn welcome_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
     content.append(&title);
     content.append(&sub);
     content.append(&start);
+    let recover = gtk::Button::with_label("Vorhandene Sicherung wiederherstellen");
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        recover.connect_clicked(move |_| {
+            nav.push(&target_page(&window, &nav, Vec::new()));
+        });
+    }
+    content.append(&recover);
     shell("Willkommen", &content, None)
 }
 
@@ -253,6 +262,7 @@ enum TargetChoice {
 fn target_picker(
     window: &gtk::Window,
     button_label: &str,
+    recovery: bool,
 ) -> (gtk::Box, Rc<RefCell<Option<TargetChoice>>>, gtk::Button) {
     let choice: Rc<RefCell<Option<TargetChoice>>> = Rc::new(RefCell::new(None));
     let next = gtk::Button::with_label(button_label);
@@ -261,7 +271,11 @@ fn target_picker(
     next.set_sensitive(false);
 
     let group = adw::PreferencesGroup::builder()
-        .title("Wohin sollen die Dateien gesichert werden?")
+        .title(if recovery {
+            "Wo liegt deine vorhandene Sicherung?"
+        } else {
+            "Wohin sollen die Dateien gesichert werden?"
+        })
         .build();
 
     let row_local = adw::ActionRow::builder()
@@ -305,11 +319,23 @@ fn target_picker(
 
     let form = adw::PreferencesGroup::builder()
         .title("Zugangsdaten (WebDAV)")
-        .description("Beispiel Hetzner Storage Box: https://u123456.your-storagebox.de")
+        .description("Beispiel: u123456.your-storagebox.de – https:// wird automatisch ergänzt.")
         .visible(false)
         .build();
     let user_entry = adw::EntryRow::builder().title("Benutzername").build();
     let url_entry = adw::EntryRow::builder().title("Server-URL").build();
+    let focus = gtk::EventControllerFocus::new();
+    let entry = url_entry.downgrade();
+    focus.connect_leave(move |_| {
+        if let Some(entry) = entry.upgrade() {
+            if let Ok(url) = cloudsave_core::normalize_webdav_url(&entry.text()) {
+                if entry.text().as_str() != url {
+                    entry.set_text(&url);
+                }
+            }
+        }
+    });
+    url_entry.add_controller(focus);
     let pw_entry = adw::PasswordEntryRow::builder().title("Passwort").build();
     let test_row = adw::ActionRow::builder().title("Verbindung").build();
     let test_btn = gtk::Button::with_label("Testen");
@@ -400,7 +426,7 @@ fn target_picker(
                 let user = user_entry.text().trim().to_string();
                 let url = url_entry.text().trim().to_string();
                 let password = pw_entry.text().to_string();
-                let validation = cloudsave_core::validate_webdav_url(&url);
+                let validation = cloudsave_core::normalize_webdav_url(&url);
                 url_error.set_text(
                     validation
                         .as_ref()
@@ -410,14 +436,13 @@ fn target_picker(
                 );
                 let valid = !user.is_empty() && validation.is_ok() && !password.is_empty();
                 test_btn.set_sensitive(valid);
-                *choice.borrow_mut() = if valid {
-                    Some(TargetChoice::Webdav {
+                *choice.borrow_mut() = match validation {
+                    Ok(url) if valid => Some(TargetChoice::Webdav {
                         url,
                         user,
                         password,
-                    })
-                } else {
-                    None
+                    }),
+                    _ => None,
                 };
                 next.set_sensitive(valid);
             })
@@ -442,8 +467,15 @@ fn target_picker(
         let pw_entry = pw_entry.clone();
         let status_label = status_label.clone();
         test_btn.connect_clicked(move |_| {
-            let url = url_entry.text().trim().to_string();
-            let user = user_entry.text().to_string();
+            let url = match cloudsave_core::normalize_webdav_url(&url_entry.text()) {
+                Ok(url) => url,
+                Err(error) => {
+                    status_label.set_text(&error.to_string());
+                    return;
+                }
+            };
+            url_entry.set_text(&url);
+            let user = user_entry.text().trim().to_string();
             let password = pw_entry.text().to_string();
             status_label.set_text("Teste …");
             let (tx, rx) = mpsc::channel::<String>();
@@ -484,7 +516,9 @@ fn save_task<T: Send + 'static>(
     success: impl Fn(T) + 'static,
 ) {
     button.set_sensitive(false);
-    status.set_text("Einstellungen werden gespeichert … Schlüsselbund gegebenenfalls entsperren.");
+    status.set_text(
+        "Endpunkt wird geprüft und eingerichtet … Schlüsselbund gegebenenfalls entsperren.",
+    );
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let _ = tx.send(task());
@@ -534,7 +568,8 @@ fn target_page(
     nav: &adw::NavigationView,
     folders: Vec<PathBuf>,
 ) -> adw::NavigationPage {
-    let (content, choice, next) = target_picker(window, "Weiter");
+    let recovery = folders.is_empty();
+    let (content, choice, next) = target_picker(window, "Weiter", recovery);
     {
         let nav = nav.clone();
         let window = window.clone();
@@ -545,7 +580,15 @@ fn target_page(
             }
         });
     }
-    shell("Ziel wählen", &content, Some(next))
+    shell(
+        if recovery {
+            "Sicherung finden"
+        } else {
+            "Ziel wählen"
+        },
+        &content,
+        Some(next),
+    )
 }
 
 pub fn add_target_page(
@@ -553,7 +596,7 @@ pub fn add_target_page(
     nav: &adw::NavigationView,
     config: Rc<RefCell<Config>>,
 ) -> adw::NavigationPage {
-    let (content, choice, add) = target_picker(window, "Hinzufügen");
+    let (content, choice, add) = target_picker(window, "Hinzufügen", false);
     let status = gtk::Label::new(None);
     status.set_wrap(true);
     content.append(&status);
@@ -574,16 +617,31 @@ pub fn add_target_page(
                 &status,
                 move || {
                     let target = choice.save_target()?;
+                    let files = cloudsave_core::list_backups(&target)?;
+                    let resume_auto = cfg.settings.auto_sync;
+                    if !files.is_empty() {
+                        cfg.settings.auto_sync = false;
+                    }
                     if !cfg.targets.contains(&target) {
-                        cfg.targets.push(target);
+                        cfg.targets.push(target.clone());
                     }
                     cfg.save(&Config::default_path())?;
-                    Ok(cfg)
+                    Ok((cfg, target, files, resume_auto))
                 },
-                move |cfg| {
+                move |(cfg, target, files, resume_auto)| {
                     *config.borrow_mut() = cfg.clone();
-                    let page = dashboard::build(&window, &nav, &cfg, false);
-                    nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+                    if files.is_empty() {
+                        show_dashboard(&window, &nav, &cfg, false);
+                    } else {
+                        nav.replace(&[existing_backup_page(
+                            &window,
+                            &nav,
+                            &cfg,
+                            &target,
+                            files.len(),
+                            resume_auto,
+                        )]);
+                    }
                 },
             );
         });
@@ -615,12 +673,17 @@ fn done_page(
         .map(|f| format!("• {}", f.display()))
         .collect::<Vec<_>>()
         .join("\n");
-    let summary = format!(
-        "{} Ordner sichern nach:\n{}\n\n{}\nDer erste Sync startet sofort.",
+    let recovery = folders.is_empty();
+    let summary = if recovery {
+        format!("Vorhandene Sicherung:\n{target_desc}\n\nNach der Prüfung kannst du deine Dateien in einen lokalen Ordner wiederherstellen. Vorhandene Dateien werden nicht überschrieben.")
+    } else {
+        format!(
+        "{} Ordner sichern nach:\n{}\n\n{}\nDer Endpunkt wird vor dem ersten Sync auf vorhandene Sicherungsdaten geprüft.",
         folders.len(),
         target_desc,
         list
-    );
+    )
+    };
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_vexpand(true);
@@ -630,7 +693,11 @@ fn done_page(
     content.set_margin_top(48);
     content.set_margin_bottom(48);
 
-    let title = gtk::Label::new(Some("Alles bereit"));
+    let title = gtk::Label::new(Some(if recovery {
+        "Sicherung wiederherstellen"
+    } else {
+        "Alles bereit"
+    }));
     title.add_css_class("title-2");
     title.set_halign(gtk::Align::Center);
 
@@ -639,7 +706,11 @@ fn done_page(
     summary_label.set_wrap(true);
     summary_label.set_xalign(0.0);
 
-    let start = gtk::Button::with_label("Sync einrichten & starten");
+    let start = gtk::Button::with_label(if recovery {
+        "Endpunkt prüfen & einrichten"
+    } else {
+        "Sync einrichten & starten"
+    });
     start.add_css_class("suggested-action");
     start.add_css_class("pill");
     start.set_halign(gtk::Align::Center);
@@ -651,7 +722,7 @@ fn done_page(
     autostart_label.set_halign(gtk::Align::Start);
     autostart_label.set_hexpand(true);
     let autostart_switch = gtk::Switch::new();
-    autostart_switch.set_active(true);
+    autostart_switch.set_active(!recovery);
     autostart_switch.set_valign(gtk::Align::Center);
     autostart_row.append(&autostart_label);
     autostart_row.append(&autostart_switch);
@@ -675,11 +746,13 @@ fn done_page(
                 &status,
                 move || {
                     choice.save_target()?;
+                    let files = cloudsave_core::list_backups(&target)?;
                     let config = Config {
                         folders,
                         targets: vec![target],
                         settings: Settings {
                             autostart,
+                            auto_sync: !recovery && files.is_empty(),
                             ..Settings::default()
                         },
                     };
@@ -687,11 +760,21 @@ fn done_page(
                     if autostart {
                         cloudsave_core::set_autostart(true)?;
                     }
-                    Ok(config)
+                    Ok((config, files))
                 },
-                move |config| {
-                    let page = dashboard::build(&window, &nav, &config, true);
-                    nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+                move |(config, files)| {
+                    if files.is_empty() && !recovery {
+                        show_dashboard(&window, &nav, &config, true);
+                    } else {
+                        nav.replace(&[existing_backup_page(
+                            &window,
+                            &nav,
+                            &config,
+                            &config.targets[0],
+                            files.len(),
+                            !recovery,
+                        )]);
+                    }
                 },
             );
         });
@@ -703,4 +786,88 @@ fn done_page(
     content.append(&status);
     content.append(&start);
     shell("Fertig", &content, None)
+}
+
+fn show_dashboard(window: &gtk::Window, nav: &adw::NavigationView, config: &Config, sync: bool) {
+    let page = dashboard::build(window, nav, config, sync);
+    nav.replace(&[adw::NavigationPage::new(&page, "Übersicht")]);
+}
+
+fn existing_backup_page(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    config: &Config,
+    target: &Target,
+    count: usize,
+    resume_auto: bool,
+) -> adw::NavigationPage {
+    let content = page_content();
+    let message = gtk::Label::new(Some(&if count == 0 {
+        "Keine Sicherungsdateien gefunden. Du kannst den Endpunkt später erneut prüfen. Automatische Synchronisierung ist ausgeschaltet.".into()
+    } else {
+        format!("{count} vorhandene Sicherungsdatei(en) gefunden. Möchtest du deine Dateien und Ordner wiederherstellen? Wähle dafür z. B. dein Home-Verzeichnis. Automatische Synchronisierung bleibt bis zu deiner Entscheidung ausgeschaltet.")
+    }));
+    message.set_wrap(true);
+    message.set_xalign(0.0);
+    message.set_selectable(true);
+    content.append(&message);
+    let recover = gtk::Button::with_label(if count == 0 {
+        "Sicherungen erneut laden"
+    } else {
+        "Vorhandene Daten wiederherstellen"
+    });
+    recover.add_css_class("suggested-action");
+    content.append(&recover);
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        let target = target.clone();
+        let config = config.clone();
+        recover.connect_clicked(move |_| {
+            let window_done = window.clone();
+            let nav_done = nav.clone();
+            let config = config.clone();
+            let page = crate::restore::setup_page(&window, &target, move |destination, files| {
+                let mut config = config.clone();
+                for file in files {
+                    if let Some(folder) = file.path.components().next() {
+                        let path = destination.join(folder.as_os_str());
+                        if path.is_dir() && !config.folders.contains(&path) {
+                            config.folders.push(path);
+                        }
+                    }
+                }
+                config.settings.auto_sync = false;
+                config.save(&Config::default_path())?;
+                show_dashboard(&window_done, &nav_done, &config, false);
+                Ok(())
+            });
+            nav.push(&page);
+        });
+    }
+    let proceed = gtk::Button::with_label(if config.folders.is_empty() {
+        "Ohne Wiederherstellung zur Übersicht"
+    } else {
+        "Ohne Wiederherstellung fortfahren"
+    });
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
+    content.append(&status);
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        let config = config.clone();
+        proceed.connect_clicked(move |_| {
+            let mut config = config.clone();
+            config.settings.auto_sync = resume_auto;
+            match config.save(&Config::default_path()) {
+                Ok(()) => show_dashboard(&window, &nav, &config, !config.folders.is_empty()),
+                Err(error) => status.set_text(&format!(
+                    "Einstellungen konnten nicht gespeichert werden: {error}"
+                )),
+            }
+        });
+    }
+    content.append(&proceed);
+    shell("Sicherungsdaten prüfen", &content, None)
 }

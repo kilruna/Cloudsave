@@ -322,6 +322,9 @@ fn webdav_backups_can_be_browsed_and_restored_with_unicode_paths() {
     };
     let report = sync(&config, &tmp.path().join("state.db")).unwrap();
     assert!(report.errors.is_empty(), "{:?}", report.errors);
+    // A new machine only knows the endpoint and credentials, not the old source/state.
+    fs::remove_dir_all(&config.folders[0]).unwrap();
+    fs::remove_file(tmp.path().join("state.db")).unwrap();
     let files = list_backups(&target).unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(
@@ -336,4 +339,28 @@ fn webdav_backups_can_be_browsed_and_restored_with_unicode_paths() {
         fs::read(output.join(&files[0].path)).unwrap(),
         b"roundtrip bytes\0\xff"
     );
+}
+
+#[test]
+fn webdav_discovery_does_not_treat_authentication_failure_as_an_empty_backup() {
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let target = Target::Webdav {
+        url: format!("http://{}/base", listener.local_addr().unwrap()),
+        user: "qa".into(),
+    };
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0u8; 8192];
+        let read = stream.read(&mut request).unwrap();
+        assert!(request[..read].starts_with(b"PROPFIND "));
+        stream
+            .write_all(
+                b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+    });
+    let error = cloudsave_core::list_backups(&target).unwrap_err();
+    assert!(error.to_string().contains("401"));
+    server.join().unwrap();
 }
