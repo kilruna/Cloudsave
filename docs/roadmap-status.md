@@ -35,7 +35,41 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
 
 - SFTP/rsync und S3 als zusätzliche Backends.
 - Übertragungsfortschritt in Dateien/Bytes, Abbrechen und Netzwerk-Retries.
+- Sichtbarer Status direkt am Tray-Symbol: laufender Sync, pausierte Automatik und Fehler auch ohne geöffnetes Menü unterscheiden; erfolgreicher Sync erhält einen eindeutigen Zustand.
+- Gemeldete Icon-Abweichung in der App-Übersicht beheben: einheitliche orange Wolke in App-Übersicht/Launcher, Fenstertitelleiste und Tray; Statusvarianten behalten dasselbe Grundsymbol.
+- Job-Historie über App-Neustarts hinweg.
 - Bandbreitenlimit, Akku-/Netzwerkregeln und Desktop-Benachrichtigungen.
 - Policies pro Quellordner, Verschlüsselung, Übersetzungen und Flathub-Release.
 - Manuelle Abnahme mit realer installierter Flatpak, Desktopportal und Wayland;
   automatische Tests auf Xvfb ersetzen diese Bedienprüfung nicht.
+
+## Nächste Schritte nach Priorität
+
+1. **Bazzite-Abnahme:** installierte Flatpak unter KDE/Wayland mit echten
+   Portal-Freigaben, Schlüsselbund und Storage Box prüfen. Wiederherstellung auf
+   einem frischen Profil einschließlich Konflikten testen und danach Issue #10
+   abschließen, wenn die Abnahme besteht.
+2. **Tray-Status und einheitliches App-Icon:** die gemeldete Abweichung in der
+   App-Übersicht reproduzieren und beheben. Eine gemeinsame Icon-Vorlage für
+   Launcher, exportiertes Flatpak-Icon, Fenstertitelleiste und Tray verwenden;
+   installierte Assets und mögliche Icon-Caches bei der Prüfung berücksichtigen.
+   Der Status muss bereits direkt am Tray-Symbol erkennbar sein:
+   - Bereit/noch kein Sync darf nicht als erfolgreiche Sicherung erscheinen.
+   - Laufender Sync erhält einen klaren Übertragungsindikator.
+   - Pausierte Automatik erhält eine erkennbare Pausenmarkierung.
+   - Fehler erhalten ein Warnzeichen; ein erfolgreicher anderer Endpunkt darf
+     einen noch offenen Fehler nicht verdecken.
+   - Ein erfolgreicher Sync erhält einen eindeutigen Erfolgszustand.
+   Form/Symbol und Tooltip ergänzen die Farbe. Das Grundsymbol bleibt die orange
+   Wolke; Statusänderungen aktualisieren den Tray ohne App-Neustart. Auf Bazzite
+   sowohl nach frischer Installation als auch nach einem Update prüfen.
+3. **Übertragungen kontrollieren:** echter Datei-/Byte-Fortschritt mit
+   Geschwindigkeit und Restzeitschätzung, anschließend Pausieren und Abbrechen.
+4. **Netzwerkfehler behandeln:** automatische Wiederholungen mit Wartezeiten und
+   verständlicher Anzeige bei nicht erreichbaren Endpunkten.
+5. **Alltagskomfort und Veröffentlichung:** dauerhafte Job-Historie,
+   Fehlerbenachrichtigungen und Flathub. Zusätzliche Protokolle folgen danach.
+
+Diese Punkte sind geplant. Die Umsetzung erfolgt über einzelne PRs mit CI vor
+dem Merge; die vorhandene Job-Anzeige im Tray ersetzt den Statusindikator am
+Symbol und die Desktop-Abnahme noch nicht.
