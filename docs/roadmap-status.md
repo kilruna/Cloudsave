@@ -66,3 +66,24 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
    Fehler zurück zur App. Die Flathub-Veröffentlichung bleibt offen.
 
 Die Umsetzung erfolgt über einzelne PRs mit CI vor dem Merge.
+
+## Vorbereitung einer Flathub-Einreichung
+
+- AppStream beschreibt lokale und WebDAV-Sicherungen, nennt die deutsche
+  Oberfläche und enthält Projektlinks, eine Altersfreigabe und einen Screenshot.
+  [AppStream-Vorgaben](https://docs.flathub.org/docs/for-app-authors/metainfo-guidelines/)
+- Die derzeitige App-ID `org.cloudsave.Cloudsave` setzt die Kontrolle über
+  `cloudsave.org` voraus. Für eine über GitHub abgeleitete ID kommt
+  `io.github.kilruna.Cloudsave` infrage. Eine Änderung der ID braucht eine
+  Migration für bestehende Flatpak-Profile, Schlüsselbund-Einträge und Autostart.
+  [Anforderungen an die App-ID](https://docs.flathub.org/docs/for-app-authors/requirements/#application-id)
+- Der unbeschränkte Sitzungs-D-Bus-Zugriff und die ausdrückliche
+  Portal-Freigabe im aktuellen Projektpaket blockieren den Flathub-Linter.
+  Die benötigten Tray-Verbindungen und Portal-Funktionen müssen mit engeren
+  Freigaben auf den unterstützten Desktops geprüft werden.
+  [Flathub-Linter](https://docs.flathub.org/docs/for-app-authors/linter/)
+- Flathub verlangt eine aktuelle Runtime, nachvollziehbare Versions-Tags und
+  eine erkennbare Wartungshistorie. Das Einreichungsmanifest und der
+  Einreichungs-PR werden von den Maintainers erstellt. KI-Beiträge zum Projekt
+  müssen bei der Einreichung offengelegt werden.
+  [Flathub-Anforderungen](https://docs.flathub.org/docs/for-app-authors/requirements/)
