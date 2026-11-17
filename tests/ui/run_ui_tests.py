@@ -288,7 +288,7 @@ def onboarding():
             typ='AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow'
             n=ui.find(typ,title);ui.command('text',n['id'],value)
         validations=[]
-        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('https://example.com/dav',True)]:
+        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('https://example.com/dav',True),('example.com:8443/dav',True)]:
             n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],url)
             validations.append(bool(ui.find('GtkButton','Weiter')['sensitive'])==valid)
         n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],'not a url')
@@ -712,6 +712,115 @@ def exclusion_folder_picker():
     finally:ui.stop()
 
 
+def recovery_choose(ui, path, button='Separaten Ordner wählen …', cancel=False):
+    ui.click(button)
+    if cancel:
+        ui.click('_Cancel');return
+    run('xdotool','key','ctrl+l');time.sleep(.2)
+    entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(path));run('xdotool','key','Return')
+    if not eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in ui.tree()),3):ui.click('_Select')
+
+
+def enter_existing(ui, target, recovery=True):
+    if recovery:
+        ui.click('Vorhandene Sicherung wiederherstellen')
+    else:
+        ui.click('Einrichtung starten')
+        for label in ('Bilder','Downloads'):ui.set_active('GtkCheckButton',True,label)
+        ui.click('Weiter')
+    choose_native_folder(ui,target);ui.click('Weiter');ui.set_active('GtkSwitch',False)
+    ui.click('Endpunkt prüfen & einrichten' if recovery else 'Sync einrichten & starten')
+    assert eventually(lambda:'Bestehende Sicherung gefunden' in ui.labels())
+
+
+def guided_recovery():
+    ui=UI('reinstall-originals',home_dirs=('Bilder','Downloads'))
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True);(backup/'Downloads').mkdir()
+    (backup/'Bilder/photo.jpg').write_bytes(b'old photo');(backup/'Downloads/install.iso').write_bytes(b'old download')
+    try:
+        ui.launch();enter_existing(ui,backup,recovery=False)
+        cfg=tomllib.loads(ui.cfg.read_text())
+        paused=not cfg['settings']['auto_sync'] and cfg['settings']['pending_recovery']['path']==str(backup)
+        untouched=not any((ui.root/'home/Bilder').iterdir()) and (backup/'Bilder/photo.jpg').read_bytes()==b'old photo'
+        ui.cfg.write_text(ui.cfg.read_text().replace('sync_mode = "backup"','sync_mode = "mirror"'))
+        ui.snapshot('found-before-sync');ui.stop();ui.launch()
+        resumed=eventually(lambda:'Bestehende Sicherung gefunden' in ui.labels()) and not any((ui.root/'home/Bilder').iterdir())
+        ui.click('Ausgewählte Ordner wiederherstellen')
+        complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        restored=(ui.root/'home/Bilder/photo.jpg').read_bytes()==b'old photo' and (ui.root/'home/Downloads/install.iso').read_bytes()==b'old download'
+        safe=cfg['settings']['sync_mode']=='backup' and cfg['settings']['auto_sync'] and 'pending_recovery' not in cfg['settings']
+        record('UI-36','Whole-PC recovery is offered before sync and survives restart in mirror mode',paused and untouched and resumed and complete and restored and safe,
+            f'Paused={paused}; untouched before choice={untouched}; restart resumed={resumed}; whole folders restored={restored}; backup mode after recovery={safe}',
+            'No upload or mirror before recovery; original home folders restored without per-file selection; completed setup resumes in Backup mode',ui.snapshot('originals-complete'))
+        ui.click('Zur Übersicht');ui.idle()
+    finally:ui.stop()
+
+
+def separate_recovery():
+    ui=UI('reinstall-separate')
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True);(backup/'Bilder/photo.jpg').write_bytes(b'old photo')
+    output=ui.root/'separate';output.mkdir()
+    try:
+        ui.launch();enter_existing(ui,backup)
+        ui.set_active('GtkCheckButton',True,'In einen separaten Ordner wiederherstellen')
+        blocked=not ui.find('GtkButton','Ausgewählte Ordner wiederherstellen')['sensitive']
+        recovery_choose(ui,output,cancel=True)
+        cancelled=not ui.find('GtkButton','Ausgewählte Ordner wiederherstellen')['sensitive']
+        recovery_choose(ui,output)
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        correct=(output/'Bilder/photo.jpg').read_bytes()==b'old photo' and not (ui.root/'home/Bilder').exists() and not cfg['folders'] and not cfg['settings']['auto_sync']
+        record('UI-37','Separate-folder recovery restores all files and leaves automatic sync paused',blocked and cancelled and complete and correct,
+            f'Needs chosen folder={blocked}; cancel safe={cancelled}; output and config safe={correct}',
+            'Explicit separate destination; whole folders restored; extraction does not enable uploads or create home sources',ui.snapshot('separate-complete'))
+    finally:ui.stop()
+
+
+def catalog_recovery():
+    ui=UI('reinstall-catalog')
+    backup=ui.root/'StorageBox';(backup/'Projekt').mkdir(parents=True);(backup/'.cloudsave').mkdir()
+    (backup/'Projekt/save.txt').write_text('portable nested data')
+    (backup/'.cloudsave/folders.toml').write_text('version=1\n[[folders]]\nnamespace="Projekt"\nhome_relative="Arbeit/Projekt"\n[[folders]]\nnamespace="Leer"\nhome_relative="Leer"\n')
+    try:
+        ui.launch();enter_existing(ui,backup)
+        mapped=str(ui.root/'home/Arbeit/Projekt') in ui.labels()
+        ui.snapshot('portable-mapping')
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        correct=(ui.root/'home/Arbeit/Projekt/save.txt').read_text()=='portable nested data' and (ui.root/'home/Leer').is_dir()
+        aliases=cfg['settings']['folder_names'].get(str(ui.root/'home/Arbeit/Projekt'))=='Projekt' and cfg['settings']['folder_home_paths'].get(str(ui.root/'home/Arbeit/Projekt'))=='Arbeit/Projekt'
+        ui.click('Zur Übersicht');ui.idle()
+        stable=not (backup/'Arbeit').exists() and (backup/'Projekt/save.txt').read_text()=='portable nested data'
+        record('UI-38','Portable catalog restores nested and empty source folders with stable remote names',mapped and complete and correct and aliases and stable,
+            f'Preview mapping={mapped}; nested/empty restored={correct}; aliases persisted={aliases}; remote namespace stable={stable}',
+            'Saved home-relative paths restored; metadata is not a user file; fresh sync preserves backup namespaces',ui.snapshot('catalog-dashboard'))
+    finally:ui.stop()
+
+
+def recovery_conflict_and_failure():
+    ui=UI('reinstall-conflict',home_dirs=('Bilder',))
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True)
+    (backup/'Bilder/a.txt').write_text('old a');(backup/'Bilder/b.txt').write_text('old b')
+    source=ui.root/'home/Bilder';(source/'a.txt').write_text('keep local a')
+    outside=ui.root/'outside';outside.mkdir()
+    source.rename(ui.root/'original-bilder');source.symlink_to(outside,target_is_directory=True)
+    try:
+        ui.launch();enter_existing(ui,backup)
+        ui.click('Ausgewählte Ordner wiederherstellen')
+        rejected=eventually(lambda:any('Wiederherstellung nicht abgeschlossen' in label for label in ui.labels())) and not any(outside.iterdir())
+        cfg=tomllib.loads(ui.cfg.read_text());pending=not cfg['settings']['auto_sync'] and 'pending_recovery' in cfg['settings']
+        source.unlink();(ui.root/'original-bilder').rename(source)
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        preserved=(source/'a.txt').read_text()=='keep local a' and (source/'b.txt').read_text()=='old b' and (backup/'Bilder/a.txt').read_text()=='old a' and not cfg['settings']['auto_sync']
+        record('UI-39','Failed recovery stays paused; retry retains local conflicts and remote backups',rejected and pending and complete and preserved,
+            f'Symlink rejected={rejected}; pending persisted={pending}; retry complete={complete}; local and backup retained={preserved}',
+            'No unsafe path writes; failure never starts mirroring; existing local files retained and conflicts keep Live-Sync paused',ui.snapshot('conflicts-complete'))
+    finally:ui.stop()
+
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -745,6 +854,8 @@ def main():
         if BINARY:native_picker()
         if BINARY:native_header_layout()
         if BINARY:exclusion_folder_picker()
+        if BINARY:
+            for test in (guided_recovery,separate_recovery,catalog_recovery,recovery_conflict_and_failure):test()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2
     total=len(RESULTS);failed=sum(r['status']=='FAIL' for r in RESULTS)

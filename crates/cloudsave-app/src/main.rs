@@ -1,6 +1,9 @@
+mod brand;
 mod dashboard;
 mod exclusion_picker;
+mod jobs;
 mod onboarding;
+mod recovery;
 mod restore;
 mod tray;
 
@@ -283,7 +286,12 @@ fn build_ui(app: &adw::Application, background: bool) {
     follow_window_controls(&header);
     header.add_css_class("cloudsave-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 14);
-    let mark = icon(Icon::Cloud, 26, 1.0, 1.0, 1.0);
+    let mark = gtk::DrawingArea::new();
+    mark.set_size_request(44, 44);
+    mark.set_can_target(false);
+    mark.set_draw_func(|_, cr, width, height| {
+        brand::paint(cr, f64::from(width), f64::from(height))
+    });
     mark.add_css_class("brand-mark");
     brand.append(&mark);
     let name = gtk::Label::new(Some("Cloudsave"));
@@ -327,6 +335,9 @@ fn build_ui(app: &adw::Application, background: bool) {
     card.append(&nav);
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
+        Ok(config) if config.settings.pending_recovery.is_some() => {
+            recovery::resume(window.upcast_ref(), &nav, &config);
+        }
         Ok(config) => {
             let page = dashboard::build(
                 window.upcast_ref(),

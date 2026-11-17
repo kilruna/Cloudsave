@@ -49,7 +49,7 @@ TMPDIR="$PWD/work/ui-tmp" GSK_RENDERER=cairo xvfb-run -a \
   --output "$PWD/work/native-ui-results"
 ```
 
-The native mode adds three scenarios using GTK's actual fallback folder chooser:
+The native mode exercises GTK's actual fallback folder chooser:
 selection, cancellation, reselection, radio switching, window controls on all
 wizard pages, an explicit first sync, and adding a second endpoint. This uses
 widget actions plus `xdotool` to open/submit the chooser's location entry.
@@ -88,6 +88,13 @@ decoration icon, and preserved button positions. UI-35 uses the actual native
 folder chooser for exclusions: outside-source paths are rejected and a selected
 folder with glob metacharacters is excluded literally in both backup targets.
 The portal variant remains a manual installed-Flatpak check.
+
+UI-36 checks discovery before the initial sync, a restart with pending recovery
+and Mirror selected, and whole-folder recovery to the original home locations.
+UI-37 exercises the real native chooser and cancellation for a separate output
+folder. UI-38 restores portable nested/empty source folders and verifies stable
+remote namespaces. UI-39 rejects a symlink destination, retries safely, retains
+conflicting local files and keeps automatic sync paused.
 
 | Finding | Fix and regression coverage |
 |---|---|
@@ -153,6 +160,13 @@ erneute Registrierung nach einem Watcher-Neustart, später Panel-Start,
 deaktiviertem Hintergrundbetrieb. Profil und Sicherungsdateien sind isolierte
 Testdaten. `results.json` protokolliert bestandene Prüfungen, Stderr-Logs und
 Config-Snapshots ergänzen die Belege.
+
+Die Suite prüft außerdem die orange/weißen ARGB-Pixel des gemeinsamen Renderers,
+das Menü bei normalem Klick, echte aktive Sync-Aufträge und die Job-Historie.
+Ein echter Download von einer kontrollierten FIFO hält den Worker an, sodass die
+Downloadphase über D-Bus überprüft werden kann; anschließend werden echte Bytes
+geschrieben und das wiederhergestellte Ergebnis geprüft. Keine Übertragung wird
+dabei durch eine Erfolgssimulation ersetzt.
 
 Diese Suite prüft das D-Bus-Protokoll und die native GTK-Lebensdauer. Darstellung
 und Klickverhalten im echten Plasma-/GNOME-Panel sowie die installierte Flatpak

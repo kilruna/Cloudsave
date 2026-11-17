@@ -18,14 +18,12 @@
     padding: 9px 18px;
 }
 .brand-mark {
-    min-width: 28px;
-    min-height: 28px;
-    background: linear-gradient(145deg, #ffb43d, #fa810b 50%, #d85800);
-    border: 1px solid rgba(255, 218, 164, 0.55);
+    min-width: 44px;
+    min-height: 44px;
     border-radius: 12px;
-    padding: 7px;
     box-shadow: 0 3px 18px rgba(255, 121, 13, 0.22);
 }
+
 .app-title { font-size: 23px; font-weight: 800; color: #fffaf5; }
 .main-card {
     background:
@@ -169,3 +167,10 @@ switch:checked {
     border-color: #ffb657;
 }
 switch slider { background: #fff8f0; }
+
+.recovery-folder {
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(224, 191, 160, 0.25);
+    background: linear-gradient(135deg, #39312b, #2a2622);
+}

@@ -271,7 +271,16 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
             let button = button.clone();
             let status = status.clone();
             background(
-                move || cloudsave_core::restore_files(&target, &selection, &destination_path),
+                move || {
+                    crate::jobs::restore(|job| {
+                        cloudsave_core::restore_with_progress(
+                            &target,
+                            &selection,
+                            &destination_path,
+                            |progress| job.progress(progress),
+                        )
+                    })
+                },
                 move |result| {
                     busy.set(false);
                     root.set_sensitive(true);

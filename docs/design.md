@@ -82,3 +82,20 @@ UI-27 prüft reale automatische Dateiübertragungen und Pausieren. UI-34 erzwing
 eine Desktop-Dekoration mit zusätzlichem Icon und unterschiedlich angeordneten
 Fensterknöpfen. UI-35 verwendet die native Ordnerauswahl, prüft ungültige Pfade
 und sichert, dass ein Ordner mit Glob-Sonderzeichen exakt ausgeschlossen wird.
+
+## Tray und geführte Wiederherstellung
+
+Header und Tray verwenden denselben Renderer für die orange Wolke. Der Tray
+liefert vier ARGB-Größen direkt an das Panel, unabhängig von dessen Icon-Theme
+und Zugriff auf Flatpak-Dateien. Ein normaler Klick öffnet auf kompatiblen Panels
+das native Menü mit aktiven Aufträgen und den letzten acht Jobs dieser Sitzung.
+
+Vorhandene Sicherungen öffnen im Setup einen Assistenten für ganze Ordner.
+Die Auswahl zwischen bisherigen Orten und separater Ausgabe steht über den
+bestätigbaren Zielpfaden. Dateioperationen laufen im Hintergrund; Fehler lassen
+die Einrichtung pausiert und wiederholbar. Nach erfolgreicher Wiederherstellung
+zeigt eine Abschlussmeldung die Anzahl geladener und beibehaltener Dateien an.
+
+![Ganze Ordner mit bisherigen Home-Zielen wiederherstellen](images/recovery-folders.png)
+
+![Vorhandene lokale Dateien bleiben erhalten und Live-Sync pausiert](images/recovery-conflicts.png)

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
@@ -55,6 +56,15 @@ pub enum Target {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    /// Keep remote folder names stable when restoring onto different local paths.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub folder_names: BTreeMap<PathBuf, String>,
+    /// Portable paths retained when a portal grants an alternative access path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub folder_home_paths: BTreeMap<PathBuf, PathBuf>,
+    /// A restart must return to recovery before any automatic upload can run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_recovery: Option<Target>,
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
     #[serde(default = "legacy_sync_mode")]
@@ -92,6 +102,9 @@ fn default_interval() -> u64 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            folder_names: BTreeMap::new(),
+            folder_home_paths: BTreeMap::new(),
+            pending_recovery: None,
             exclude_patterns: Vec::new(),
             sync_mode: SyncMode::Backup,
             auto_sync: default_true(),

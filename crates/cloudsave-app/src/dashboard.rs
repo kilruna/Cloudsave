@@ -865,7 +865,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     let state_path_owned = state_path.to_path_buf();
     let (tx, rx) = mpsc::channel::<Result<SyncReport, String>>();
     std::thread::spawn(move || {
-        let res = cloudsave_core::sync(&cfg, &state_path_owned).map_err(|e| e.to_string());
+        let res = crate::jobs::sync(&cfg, &state_path_owned).map_err(|e| e.to_string());
         let _ = tx.send(res);
     });
 

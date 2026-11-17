@@ -36,7 +36,7 @@ angeforderten Berechtigungen an; Home wird für Ordnerliste und Quellen lesbar g
 2. **Automatik:** Eine Testdatei ändern und die automatische Übertragung prüfen. Live-Sync startet normalerweise nach etwa drei Sekunden Ruhezeit. **Zusätzlicher Kontrollscan (Minuten)** fängt verpasste Dateisystemereignisse auf. Auto-Sync ausschalten: Weitere Änderungen dürfen erst nach **Jetzt synchronisieren** übertragen werden.
 3. **Ausschlüsse:** Unter Einstellungen **Dateien und Ordner ausschließen** öffnen und **Temporäre Dateien** anklicken; die Auswahl wird sofort gespeichert. Eine neue `.tmp`-Datei in der Quelle anlegen und **Jetzt synchronisieren** klicken. Diese Datei darf nicht im Ziel erscheinen. Weitere Gruppen erfassen Cache-Ordner, temporäre Ordner, System-Vorschaudateien und Entwicklungs-Caches. **Ordner auswählen …** übernimmt einen Unterordner aus einer Quelle; **Eigene Regel hinzufügen …** öffnet ein kleines Eingabefenster, etwa für `*.bak` oder `Projekte/Cache/**`. Regeln gelten für alle Quellen; vorhandene ausgeschlossene Sicherungen bleiben erhalten. Ohne Auswahl werden keine Standardregeln automatisch aktiviert.
 4. **Backup-Modus:** Eine bereits gesicherte Testdatei lokal löschen und synchronisieren. Im Backup-Modus bleibt ihre Sicherung erhalten. Den Spiegelungsmodus ausschließlich mit Testdaten ausprobieren; er gibt echte Dateilöschungen an das Ziel weiter.
-5. **Wiederherstellen:** **Sicherungen wiederherstellen → Sicherungen laden**, Dateien markieren und einen dritten, leeren Zielordner wählen. Inhalte vergleichen. Beim erneuten Wiederherstellen bleiben vorhandene Dateien unverändert.
+5. **Wiederherstellen:** Nach einer Neuinstallation auf dem Startbildschirm **Vorhandene Sicherung wiederherstellen** wählen und den Endpunkt verbinden. Auch die normale Einrichtung prüft den Endpunkt vor dem ersten Sync. Der Assistent bietet ganze Ordner **an den bisherigen Orten** oder **in einem separaten Ordner** an; einzelne Dateien müssen dafür nicht ausgewählt werden. Zielpfade prüfen und Wiederherstellung starten. Im Flatpak den Home-Ordner bei Bedarf einmal für Schreibzugriff über den Dialog bestätigen. Für einzelne Dateien bleibt **Sicherungen wiederherstellen → Sicherungen laden** im Dashboard verfügbar.
 6. **Optional WebDAV:** Mit einem Testverzeichnis auf dem Server wiederholen. Nach **App beenden** und Neustart müssen gespeicherte Zugangsdaten über den Schlüsselbund verfügbar sein; dieser muss gegebenenfalls entsperrt werden. Bei Hetzner müssen WebDAV und äußere Erreichbarkeit aktiviert sein. Subaccounts benötigen ihre eigene Domain, z. B. `https://uXXXXX-sub1.your-storagebox.de` zum Benutzer `uXXXXX-sub1`.
 
 ### Feedback melden
@@ -65,7 +65,7 @@ private Pfade in Meldungen oder Screenshots bitte schwärzen.
 - **Automatische Änderungserkennung:** Kombination aus System-Ereignissen (inotify) und gelegentlichem Scan – kein dauerhaftes Durchsuchen der Platte im Hintergrund.
 - **Delta-Sync:** Nur geänderte Dateien werden übertragen, nicht der ganze Ordner.
 - **Sichere Zugangsdaten:** Passwörter liegen im System-Schlüsselbund. Alte Passwortdateien werden nach erfolgreicher Übernahme entfernt.
-- **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`). Mit aktivierter Hintergrundoption verbirgt **×** das Fenster; das Symbol im Systemabschnitt bleibt auch bei geöffnetem Fenster verfügbar. Ein Klick oder **Cloudsave öffnen** im Symbolmenü öffnet dasselbe Fenster wieder. **Beenden** im Symbolmenü oder **App beenden** in den Einstellungen beendet die App vollständig. Ohne Hintergrundoption beendet bereits **×** die App.
+- **Autostart & Hintergrund:** Optional startet Cloudsave minimiert beim Systemstart (`--background`). Mit aktivierter Hintergrundoption verbirgt **×** das Fenster. Die orange Wolke im Systemabschnitt bleibt auch bei geöffnetem Fenster verfügbar. Ein normaler Klick öffnet auf kompatiblen Panels das Menü mit aktiven Uploads/Downloads und den letzten acht Jobs dieser Sitzung. **Cloudsave öffnen** zeigt dasselbe Fenster wieder; **Beenden** oder **App beenden** in den Einstellungen beendet die App vollständig. Ohne Hintergrundoption beendet bereits **×** die App.
 - **Ressourcenschonend:** Datei-Ereignisse lösen gebündelte Syncs aus; ein geplanter Scan dient als Fallback. Übertragungen laufen außerhalb des UI-Threads.
 
 Das Symbol verwendet den StatusNotifierItem-Standard, den etwa KDE Plasma
@@ -103,6 +103,12 @@ Sicherung auf einen temporären Pfad geschrieben.
 Neue Profile verwenden den Backup-Modus ohne Löschweitergabe. Vorhandene Profile
 behalten ihre bisherige Spiegelung; der Modus ist unter Einstellungen umstellbar.
 Beim Wiederherstellen bleiben vorhandene lokale Dateien erhalten.
+Eine noch offene Wiederherstellung blockiert Sync auch nach einem Neustart.
+Nach vollständiger Wiederherstellung an die bisherigen Orte setzt Cloudsave
+Live-Sync im Backup-Modus fort. Bei vorhandenen lokalen Dateien oder einem
+separaten Ausgabeordner bleibt die Automatik pausiert. Alte Sicherungen ohne
+Ordnerzuordnung erhalten bestätigbare Vorschläge aus ihren obersten Ordnernamen;
+externe oder unbekannte Zielpfade lassen sich im Dialog zuweisen.
 
 [Bedienung und aktueller Roadmap-Stand](docs/roadmap-status.md) ·
 [GTK-Regressionstests](tests/ui/README.md)
