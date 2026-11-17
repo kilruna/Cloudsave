@@ -66,6 +66,15 @@ and stderr logs. The generated bridge library is ignored by Git.
 
 ## Coverage and remaining manual checks
 
+UI-32 verifies the dashboard's real statistics before and after a multi-target
+sync and after a file change. Native mode additionally resizes the actual window
+to 560 pixels and captures its stacked layout. Screenshots use the current X11
+geometry, including after resizes. The Rust test job runs the full native suite
+in an isolated network namespace and publishes `dashboard-test-results` even
+when checks fail. Statistics count tracked backup copies across all targets;
+they do not claim to measure total server disk usage. The timestamp card shows
+the last recorded file transfer, rather than a fabricated successful scan time.
+
 | Finding | Fix and regression coverage |
 |---|---|
 | F1 | Persist per-file source ownership; mirror deletes only for selected, fully scanned sources. UI-14/15 plus Core tests for unavailable/deselected sources, partial scan permissions, restart, legacy migration, namespace collisions, and intentional deletes. |

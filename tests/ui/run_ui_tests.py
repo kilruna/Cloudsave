@@ -11,7 +11,7 @@ os.environ['GDK_BACKEND'] = 'x11'
 import gi
 gi.require_version('Gdk', '3.0')
 gi.require_version('GdkX11', '3.0')
-from gi.repository import Gdk, GdkX11
+from gi.repository import Gdk, GdkX11, GLib
 
 HERE = pathlib.Path(__file__).resolve().parent
 APP = 'org.cloudsave.Cloudsave'
@@ -205,7 +205,15 @@ class UI:
         if self.xid:
             display=Gdk.Display.get_default()
             window=GdkX11.X11Window.foreign_new_for_display(display,self.xid)
-            pixbuf=Gdk.pixbuf_get_from_window(window,0,0,window.get_width(),window.get_height())
+            window.set_events(window.get_events() | Gdk.EventMask.STRUCTURE_MASK)
+            display.sync()
+            context=GLib.MainContext.default()
+            while context.pending(): context.iteration(False)
+            # Foreign GdkWindow sizes can stay cached after xdotool resizes.
+            info=run('xwininfo','-id',str(self.xid))
+            dimensions={line.split(':',1)[0].strip():int(line.split(':',1)[1]) for line in info.splitlines()
+                        if line.strip().startswith(('Width:','Height:'))}
+            pixbuf=Gdk.pixbuf_get_from_window(window,0,0,dimensions['Width'],dimensions['Height'])
             if pixbuf: pixbuf.savev(str(OUT/(stem+'.png')),'png',[],[])
         return [stem+'.png',stem+'.tree.tsv']
 
@@ -299,6 +307,7 @@ def dashboard():
     ui=UI('dashboard');source,targets=fixture(ui)
     try:
         ui.launch();ui.idle()
+        empty_stats=all(text in ui.labels() for text in ('0','0 B','Noch nie'))
         files=[p/'Documents/save.txt' for p in targets]
         record('UI-09','Auto-sync OFF suppresses startup sync',not any(p.exists() for p in files),
                f'Target files created at startup: {[p.exists() for p in files]}; auto_sync=false',
@@ -314,6 +323,19 @@ def dashboard():
         ui.click('Jetzt synchronisieren');ui.idle()
         record('UI-11','Manual sync propagates changed content',all(p.read_bytes()==(source/'save.txt').read_bytes() for p in files),
                'Both targets match edited source','Explicit sync updates every target')
+        expected_size=2*sum(p.stat().st_size for p in source.rglob('*') if p.is_file())
+        live_stats='4' in ui.labels() and f'{expected_size} B' in ui.labels()
+        narrow=True
+        if BINARY:
+            run('xdotool','windowsize',str(ui.xid),'560','900');time.sleep(.4)
+            info=run('xwininfo','-id',str(ui.xid))
+            width=int(next(line.split(':',1)[1] for line in info.splitlines() if line.strip().startswith('Width:')))
+            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel','Erfasste Sicherungsgröße'))
+            ui.snapshot('orange-narrow')
+            run('xdotool','windowsize',str(ui.xid),'1180','820');time.sleep(.4)
+        record('UI-32','Dashboard shows actual backup statistics and adapts to narrow windows',empty_stats and live_stats and narrow,
+               f'Empty state={empty_stats}; expected 4 copies / {expected_size} B={live_stats}; narrow layout={narrow}',
+               'Zero before first sync; actual counts and bytes after sync; source and target panels remain reachable',ui.snapshot('orange-dashboard'))
         ui.click('Einstellungen')
         spin=ui.find('GtkSpinButton');ui.command('value',spin['id'],2)
         record('UI-12','Interval setting persists',tomllib.loads(ui.cfg.read_text())['settings']['sync_interval_minutes']==2,
