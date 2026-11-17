@@ -25,6 +25,15 @@ bleibt zusätzlich am Desktop zu prüfen.
 - Lange Pfade werden in der Übersicht gekürzt und sind im Tooltip vollständig
   verfügbar. Die Auswahl der Quellen und das Verhalten der Synchronisierung
   bleiben erhalten.
+- Jeder Endpunkt hat eine eigene Kachel. Verbindungsprüfung und Wiederherstellung
+  beziehen sich ausschließlich auf das dort angezeigte Ziel; Rückmeldungen zur
+  Verbindung bleiben in derselben Kachel.
+- **Weiteren Endpunkt hinzufügen** steht unterhalb aller Endpunkt-Kacheln.
+  Auto-Sync ist eine gemeinsame Einstellung und steht separat mit dem Hinweis
+  **Für alle Endpunkte**. Es werden keine unabhängigen Schalter pro Ziel
+  vorgetäuscht.
+
+![Zwei getrennte Endpunkt-Kacheln mit Hinzufügen darunter](images/dashboard-orange-endpoints.png)
 
 ![Fehler mit vollständiger Meldung und Warnsymbol](images/dashboard-orange-error.png)
 
@@ -39,3 +48,6 @@ Outline-Symbole werden direkt gezeichnet und hängen nicht vom Icon-Theme ab.
 
 Die bestehende GTK-Suite prüft außerdem echte Statistikwerte vor und nach dem
 Sync sowie ein tatsächlich auf 560 Pixel verkleinertes Fenster (UI-32).
+UI-33 prüft getrennte Endpunkt-Kacheln, die Position der Hinzufügen-Aktion,
+die gemeinsame Auto-Sync-Einstellung und die zielbezogene Verbindungsprüfung
+und Wiederherstellung mit zwei unterschiedlichen Testzielen.

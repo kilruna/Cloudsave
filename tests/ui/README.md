@@ -75,6 +75,13 @@ when checks fail. Statistics count tracked backup copies across all targets;
 they do not claim to measure total server disk usage. The timestamp card shows
 the last recorded file transfer, rather than a fabricated successful scan time.
 
+UI-33 verifies one card per endpoint, with the add action outside both cards and
+one explicitly global auto-sync switch. It tests a reachable local destination
+and a destination blocked by a file: connection results stay in the respective
+card, and each restore action loads only that card's endpoint. Screenshot
+capture consumes window-destruction events between app launches, so reused X11
+IDs cannot silently suppress later screenshots.
+
 | Finding | Fix and regression coverage |
 |---|---|
 | F1 | Persist per-file source ownership; mirror deletes only for selected, fully scanned sources. UI-14/15 plus Core tests for unavailable/deselected sources, partial scan permissions, restart, legacy migration, namespace collisions, and intentional deletes. |

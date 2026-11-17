@@ -202,6 +202,7 @@ class UI:
         self.tree()
         stem=f'{self.name}-{tag}'
         (OUT/(stem+'.tree.tsv')).write_text((self.root/'control/tree.tsv').read_text())
+        evidence=[stem+'.tree.tsv']
         if self.xid:
             display=Gdk.Display.get_default()
             window=GdkX11.X11Window.foreign_new_for_display(display,self.xid)
@@ -213,9 +214,12 @@ class UI:
             info=run('xwininfo','-id',str(self.xid))
             dimensions={line.split(':',1)[0].strip():int(line.split(':',1)[1]) for line in info.splitlines()
                         if line.strip().startswith(('Width:','Height:'))}
-            pixbuf=Gdk.pixbuf_get_from_window(window,0,0,dimensions['Width'],dimensions['Height'])
-            if pixbuf: pixbuf.savev(str(OUT/(stem+'.png')),'png',[],[])
-        return [stem+'.png',stem+'.tree.tsv']
+            if window.is_viewable():
+                pixbuf=Gdk.pixbuf_get_from_window(window,0,0,dimensions['Width'],dimensions['Height'])
+                if pixbuf:
+                    pixbuf.savev(str(OUT/(stem+'.png')),'png',[],[])
+                    evidence.insert(0,stem+'.png')
+        return evidence
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -224,6 +228,12 @@ class UI:
             except subprocess.TimeoutExpired:
                 os.killpg(self.proc.pid,signal.SIGKILL);self.proc.wait(timeout=5)
         if hasattr(self,'logfile'):self.logfile.close()
+        # Consume DestroyNotify before another process can reuse the same XID.
+        # Otherwise GDK may associate its stale foreign window with the new app.
+        Gdk.Display.get_default().sync()
+        context=GLib.MainContext.default()
+        while context.pending(): context.iteration(False)
+        self.xid=None
         if self.cfg.exists():
             (OUT/(self.name+'.config.toml')).write_text(self.cfg.read_text())
 
@@ -330,8 +340,8 @@ def dashboard():
             run('xdotool','windowsize',str(ui.xid),'560','900');time.sleep(.4)
             info=run('xwininfo','-id',str(ui.xid))
             width=int(next(line.split(':',1)[1] for line in info.splitlines() if line.strip().startswith('Width:')))
-            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel','Erfasste Sicherungsgröße'))
-            ui.snapshot('orange-narrow')
+            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel 1','Ziel 2','Erfasste Sicherungsgröße'))
+            narrow=narrow and any(name.endswith('.png') for name in ui.snapshot('orange-narrow'))
             run('xdotool','windowsize',str(ui.xid),'1180','820');time.sleep(.4)
         record('UI-32','Dashboard shows actual backup statistics and adapts to narrow windows',empty_stats and live_stats and narrow,
                f'Empty state={empty_stats}; expected 4 copies / {expected_size} B={live_stats}; narrow layout={narrow}',
@@ -581,6 +591,48 @@ def restore_ui():
     finally:ui.stop()
 
 
+
+def endpoint_cards():
+    ui=UI('endpoint-cards');source,targets=fixture(ui)
+    (targets[0]/'Archive').mkdir(parents=True)
+    (targets[0]/'Archive/old.txt').write_text('existing backup')
+    targets[1].write_text('this file deliberately blocks the second endpoint')
+    def card_nodes(title):
+        heading=ui.find('GtkLabel',title)
+        card=ui.nodes[heading['parent']]
+        return ui.descendants(card)
+    def click_in_card(title,label):
+        node=next(n for n in card_nodes(title) if n['type']=='GtkButton' and n['label']==label)
+        ui.command('click',node['id']);time.sleep(.4)
+    try:
+        ui.launch();ui.idle()
+        cards=[card_nodes('Ziel 1'),card_nodes('Ziel 2')]
+        add=ui.find('GtkButton','Weiteren Endpunkt hinzufügen')
+        separate=all(add['id'] not in [n['id'] for n in nodes] and
+                     sum(n['type']=='GtkButton' and n['label']=='Verbindung testen' for n in nodes)==1 and
+                     sum(n['type']=='GtkButton' and n['label']=='Sicherungen wiederherstellen' for n in nodes)==1
+                     for nodes in cards)
+        global_auto='Für alle Endpunkte' in ui.labels() and sum(n['type']=='GtkSwitch' and n['mapped'] for n in ui.tree())==1
+        ui.set_active('GtkSwitch',True);enabled=tomllib.loads(ui.cfg.read_text())['settings']['auto_sync']
+        ui.set_active('GtkSwitch',False);paused=not tomllib.loads(ui.cfg.read_text())['settings']['auto_sync']
+        click_in_card('Ziel 1','Verbindung testen')
+        first_ok=eventually(lambda:any('✓' in n['label'] and str(targets[0]) in n['label'] for n in card_nodes('Ziel 1')))
+        click_in_card('Ziel 2','Verbindung testen')
+        second_error=eventually(lambda:any(str(targets[1]) in n['label'] and ':' in n['label'] and '✓' not in n['label'] for n in card_nodes('Ziel 2') if n['type']=='GtkLabel' and n['label'].startswith('Lokal:')))
+        first_still_ok=any('✓' in n['label'] for n in card_nodes('Ziel 1'))
+        click_in_card('Ziel 2','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        second_restore=eventually(lambda:any('Sicherungsziel nicht gefunden' in text and str(targets[1]) in text for text in ui.labels()))
+        back=ui.find('AdwBackButton');button=next(n for n in ui.descendants(back) if n['type']=='GtkButton');ui.command('click',button['id']);time.sleep(.4)
+        click_in_card('Ziel 1','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        first_restore=eventually(lambda:any('1 Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
+        found=any('Archive/old.txt' in text for text in ui.labels())
+        record('UI-33','Separate endpoint cards keep add action outside and scope connection/restore actions',
+               separate and global_auto and enabled and paused and first_ok and second_error and first_still_ok and second_restore and first_restore and found,
+               f'Separate cards={separate}; global auto={global_auto and enabled and paused}; tests isolated={first_ok and second_error and first_still_ok}; restore isolated={second_restore and first_restore and found}',
+               'One card per endpoint; add outside; global auto is explicit; each card tests and restores only its own target',ui.snapshot('scoped-restore'))
+    finally:ui.stop()
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -604,7 +656,7 @@ def main():
                      'Widget activation/property changes, not physical mouse/keyboard or accessibility certification'])
     (OUT/'environment.json').write_text(json.dumps(metadata,indent=2,ensure_ascii=False))
     try:
-        for test in (onboarding,dashboard,missing_source,empty_targets):test()
+        for test in (onboarding,dashboard,endpoint_cards,missing_source,empty_targets):test()
         empty_or_missing_home()
         unavailable_keyring()
         backup_mode()
