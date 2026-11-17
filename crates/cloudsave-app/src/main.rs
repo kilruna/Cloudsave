@@ -8,7 +8,7 @@ mod restore;
 mod tray;
 
 use adw::prelude::*;
-use gtk::glib;
+use gtk::{gdk::prelude::GdkCairoContextExt, glib};
 use gtk4 as gtk;
 use libadwaita as adw;
 
@@ -287,15 +287,17 @@ fn build_ui(app: &adw::Application, background: bool) {
     follow_window_controls(&header);
     header.add_css_class("cloudsave-header");
     let brand = gtk::Box::new(gtk::Orientation::Horizontal, 14);
-    let mark = match brand::texture() {
-        Ok(texture) => gtk::Image::from_paintable(Some(&texture)),
-        Err(error) => {
-            eprintln!("App-Icon nicht verfügbar: {error}");
-            gtk::Image::from_icon_name("org.cloudsave.Cloudsave")
-        }
-    };
-    mark.set_pixel_size(44);
+    let mark = gtk::DrawingArea::new();
+    mark.set_size_request(44, 44);
     mark.set_can_target(false);
+    match brand::pixbuf(128) {
+        Ok(cloud) => mark.set_draw_func(move |_, cr, width, height| {
+            cr.scale(f64::from(width) / 128.0, f64::from(height) / 128.0);
+            cr.set_source_pixbuf(&cloud, 0.0, 0.0);
+            let _ = cr.paint();
+        }),
+        Err(error) => eprintln!("App-Icon nicht verfügbar: {error}"),
+    }
     mark.add_css_class("brand-mark");
     brand.append(&mark);
     let name = gtk::Label::new(Some("Cloudsave"));

@@ -1,13 +1,13 @@
 //! Render the same artwork used by the launcher, with badges for the tray.
 use crate::jobs::TrayStatus;
 use gtk4::{
-    cairo, gdk, gdk_pixbuf, glib,
+    cairo, gdk_pixbuf, glib,
     prelude::{GdkCairoContextExt, PixbufLoaderExt},
 };
 
 const ARTWORK: &[u8] = include_bytes!("../../../data/org.cloudsave.Cloudsave.svg");
 
-fn pixbuf(size: i32) -> Result<gdk_pixbuf::Pixbuf, glib::Error> {
+pub fn pixbuf(size: i32) -> Result<gdk_pixbuf::Pixbuf, glib::Error> {
     let loader = gdk_pixbuf::PixbufLoader::with_type("svg")?;
     loader.set_size(size, size);
     loader.write(ARTWORK)?;
@@ -15,10 +15,6 @@ fn pixbuf(size: i32) -> Result<gdk_pixbuf::Pixbuf, glib::Error> {
     loader
         .pixbuf()
         .ok_or_else(|| draw_error("App-Icon konnte nicht geladen werden"))
-}
-
-pub fn texture() -> Result<gdk::Texture, glib::Error> {
-    Ok(gdk::Texture::for_pixbuf(&pixbuf(128)?))
 }
 
 fn draw_error(error: impl std::fmt::Display) -> glib::Error {
