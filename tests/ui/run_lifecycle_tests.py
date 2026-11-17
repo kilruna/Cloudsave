@@ -22,6 +22,7 @@ MENU = '/MenuBar'
 SNI = 'org.kde.StatusNotifierItem'
 WATCHER = 'org.kde.StatusNotifierWatcher'
 DBUSMENU = 'com.canonical.dbusmenu'
+NOTIFICATIONS = 'org.freedesktop.Notifications'
 
 
 def eventually(fn, timeout=10):
@@ -63,6 +64,33 @@ class Watcher:
                                   'org.freedesktop.DBus', 'ReleaseName',
                                   GLib.Variant('(s)', (WATCHER,)), None,
                                   Gio.DBusCallFlags.NONE, 5000, None)
+
+
+class Notifications:
+    def __init__(self, connection):
+        self.shown = []
+        info = Gio.DBusNodeInfo.new_for_xml('''<node><interface name="org.freedesktop.Notifications">
+          <method name="Notify">
+            <arg type="s" direction="in"/><arg type="u" direction="in"/>
+            <arg type="s" direction="in"/><arg type="s" direction="in"/><arg type="s" direction="in"/>
+            <arg type="as" direction="in"/><arg type="a{sv}" direction="in"/><arg type="i" direction="in"/>
+            <arg type="u" direction="out"/>
+          </method>
+          <method name="GetCapabilities"><arg type="as" direction="out"/></method>
+          <signal name="ActionInvoked"><arg type="u"/><arg type="s"/></signal>
+        </interface></node>''').interfaces[0]
+        connection.register_object('/org/freedesktop/Notifications', info, self.handle, None, None)
+        connection.call_sync('org.freedesktop.DBus', '/org/freedesktop/DBus',
+                             'org.freedesktop.DBus', 'RequestName',
+                             GLib.Variant('(su)', (NOTIFICATIONS, 4)), None,
+                             Gio.DBusCallFlags.NONE, 5000, None)
+
+    def handle(self, connection, sender, path, interface, method, params, invocation):
+        if method == 'Notify':
+            self.shown.append(params.unpack())
+            invocation.return_value(GLib.Variant('(u)', (len(self.shown),)))
+        else:
+            invocation.return_value(GLib.Variant('(as)', (['body', 'actions'],)))
 
 
 class SessionUI(ui.UI):
@@ -123,6 +151,7 @@ def main():
            '-o', str(ui.HERE/'gtk_qa_bridge.so'), str(ui.HERE/'gtk_qa_bridge.c'), '-ldl')
     connection = Gio.bus_get_sync(Gio.BusType.SESSION, None)
     watcher = Watcher(connection)
+    notifications = Notifications(connection)
     checks = []
 
     def item_property(name):
@@ -168,7 +197,7 @@ def main():
         revision, layout = call(connection, MENU, DBUSMENU, 'GetLayout', '(iias)', (0, -1, []))
         assert revision >= 1
         labels = [child[1]['label'] for child in layout[2]]
-        assert all(label in labels for label in ['Cloudsave öffnen','Beenden','Aktive Jobs','Letzte Jobs dieser Sitzung'])
+        assert all(label in labels for label in ['Cloudsave öffnen','Beenden','Aktive Jobs','Letzte Jobs'])
         group = call(connection, MENU, DBUSMENU, 'GetGroupProperties', '(aias)', ([1, 2], ['label']))[0]
         assert len(group) == 2 and all(list(properties) == ['label'] for _, properties in group)
         assert call(connection, MENU, DBUSMENU, 'GetProperty', '(is)', (1, 'label'))[0] == 'Cloudsave öffnen'
@@ -307,7 +336,7 @@ def main():
     finally:
         app.stop()
 
-    app = SessionUI('tray-status', folders=[], auto_sync=False)
+    app = SessionUI('tray-status', folders=[], auto_sync=False, run_in_background=True)
     source, working, broken = (app.root/name for name in ('source', 'backup', 'second-backup'))
     source.mkdir()
     (source/'save.txt').write_text('save data')
@@ -326,6 +355,17 @@ def main():
         app.click('Jetzt synchronisieren')
         failure = wait_status('Fehler · Sicherung prüfen')
         assert (working/'source/save.txt').read_text() == 'save data'
+        eventually(lambda: len(notifications.shown) == 1)
+        assert notifications.shown[0][3] == 'Synchronisierung mit Fehlern'
+        app.close_window()
+        connection.emit_signal(None, '/org/freedesktop/Notifications', NOTIFICATIONS,
+                               'ActionInvoked', GLib.Variant('(us)', (1, 'default')))
+        eventually(lambda: any(n['type'] == 'GtkApplicationWindow' and n['mapped'] for n in app.tree()))
+
+        app.click('Jetzt synchronisieren')
+        eventually(lambda: sum('1 Fehler' in row[1]['label'] for row in menu_rows()) == 2)
+        assert len(notifications.shown) == 1
+        passed('A failed sync sends a desktop notification without repeating it for the same outstanding failure')
 
         broken.unlink()
         broken.mkdir()
@@ -335,6 +375,18 @@ def main():
         eventually(lambda: len(icons_changed) >= 3)
         assert len({ready, paused, busy_icon, failure, success}) == 5
         passed('Tray icon changes across five states and only clears a failed sync after a successful retry')
+
+        app.set_active('GtkSwitch', False)
+        wait_status('Automatische Synchronisierung pausiert')
+        previous_jobs = [row[1]['label'] for row in menu_rows() if 'hochgeladen' in row[1]['label']]
+        assert len(previous_jobs) == 3
+        menu_click('Beenden')
+        assert app.proc.wait(timeout=8) == 0
+        app.stop()
+        app.launch(background=True)
+        wait_status('Automatische Synchronisierung pausiert')
+        assert [row[1]['label'] for row in menu_rows() if 'hochgeladen' in row[1]['label']] == previous_jobs
+        passed('Tray history retains the actual completed jobs across app restart')
     finally:
         connection.signal_unsubscribe(subscription)
         app.stop()

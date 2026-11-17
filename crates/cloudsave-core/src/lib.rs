@@ -28,7 +28,7 @@ pub use restore::{
     BackupFile, RestoreReport,
 };
 pub use secrets::{load_password, save_password};
-pub use state::State;
+pub use state::{FinishedJob, JobHistory, State};
 pub use watch::{ChangeWatcher, WatchConfig, WatchEvent};
 pub use webdav::{normalize_webdav_url, validate_webdav_url, WebdavBackend};
 

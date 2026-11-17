@@ -1,11 +1,72 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::Result;
 
 pub struct State {
     conn: Connection,
+}
+
+pub struct JobHistory {
+    conn: Connection,
+}
+
+pub struct FinishedJob {
+    pub finished_at: i64,
+    pub label: String,
+    pub detail: String,
+}
+
+impl JobHistory {
+    pub const LIMIT: usize = 8;
+
+    pub fn open(path: &Path) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let conn = Connection::open(path)?;
+        // Starting Cloudsave should stay responsive if another process has the history open.
+        conn.busy_timeout(Duration::from_millis(150))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS jobs (
+                id INTEGER PRIMARY KEY,
+                finished_at INTEGER NOT NULL,
+                label TEXT NOT NULL,
+                detail TEXT NOT NULL
+            )",
+            [],
+        )?;
+        Ok(Self { conn })
+    }
+
+    pub fn recent(&self) -> Result<Vec<FinishedJob>> {
+        let mut query = self
+            .conn
+            .prepare("SELECT finished_at, label, detail FROM jobs ORDER BY id DESC LIMIT ?1")?;
+        let rows = query.query_map([Self::LIMIT as i64], |row| {
+            Ok(FinishedJob {
+                finished_at: row.get(0)?,
+                label: row.get(1)?,
+                detail: row.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    pub fn record(&mut self, job: &FinishedJob) -> Result<()> {
+        let transaction = self.conn.transaction()?;
+        transaction.execute(
+            "INSERT INTO jobs (finished_at, label, detail) VALUES (?1, ?2, ?3)",
+            params![job.finished_at, job.label, job.detail],
+        )?;
+        transaction.execute(
+            "DELETE FROM jobs WHERE id NOT IN (SELECT id FROM jobs ORDER BY id DESC LIMIT ?1)",
+            [Self::LIMIT as i64],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

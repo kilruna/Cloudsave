@@ -1,7 +1,9 @@
-//! Small, bounded session activity shared by workers and the tray. No GTK on workers.
+//! Bounded activity shared by the workers, dashboard and tray.
 use cloudsave_core::{
-    Progress, RestoreReport, SyncReport, Target, TransferControl, TransferProgress, TransferStatus,
+    Config, FinishedJob, JobHistory, Progress, RestoreReport, SyncReport, Target, TransferControl,
+    TransferProgress, TransferStatus,
 };
+use gtk4::{gio, glib, prelude::*};
 use std::{
     collections::VecDeque,
     sync::{Mutex, OnceLock},
@@ -102,6 +104,40 @@ fn state() -> std::sync::MutexGuard<'static, State> {
         .get_or_init(Default::default)
         .lock()
         .unwrap_or_else(|error| error.into_inner())
+}
+
+fn open_history() -> cloudsave_core::Result<JobHistory> {
+    JobHistory::open(&Config::default_state_path().with_file_name("jobs.db"))
+}
+
+pub fn load_history() {
+    let path = Config::default_state_path().with_file_name("jobs.db");
+    if !path.is_file() {
+        return;
+    }
+    match open_history().and_then(|history| history.recent()) {
+        Ok(history) => {
+            let mut state = state();
+            for job in history.into_iter().rev() {
+                state.next += 1;
+                let id = state.next;
+                state.recent.push_front(history_entry(id, job));
+            }
+        }
+        Err(error) => eprintln!("Auftragsverlauf nicht verfügbar: {error}"),
+    }
+}
+
+fn history_entry(id: u64, job: FinishedJob) -> Entry {
+    let time = glib::DateTime::from_unix_local(job.finished_at)
+        .and_then(|time| time.format("%d.%m. %H:%M"))
+        .map(|time| time.to_string())
+        .unwrap_or_default();
+    Entry {
+        id,
+        label: job.label,
+        detail: format!("{time} · {}", job.detail),
+    }
 }
 pub fn snapshot() -> Snapshot {
     let state = state();
@@ -216,11 +252,12 @@ enum Outcome<'a> {
 #[must_use]
 pub struct Job {
     id: u64,
+    label: &'static str,
     control: TransferControl,
     finished: bool,
 }
 impl Job {
-    fn start(label: &str, control: TransferControl) -> Self {
+    fn start(label: &'static str, control: TransferControl) -> Self {
         let mut state = state();
         state.next += 1;
         let id = state.next;
@@ -234,6 +271,7 @@ impl Job {
         });
         Self {
             id,
+            label,
             control,
             finished: false,
         }
@@ -267,28 +305,52 @@ impl Job {
         self.complete(detail, outcome);
     }
     fn complete(&mut self, detail: String, outcome: Option<Outcome<'_>>) {
+        let finished = FinishedJob {
+            finished_at: glib::DateTime::now_utc().map_or(0, |time| time.to_unix()),
+            label: self.label.into(),
+            detail,
+        };
+        if let Err(error) = open_history().and_then(|mut history| history.record(&finished)) {
+            eprintln!("Auftragsverlauf konnte nicht gespeichert werden: {error}");
+        }
         let mut state = state();
-        match outcome {
-            Some(Outcome::Sync(succeeded)) => state.last_sync_succeeded = Some(succeeded),
+        let notify = match outcome {
+            Some(Outcome::Sync(succeeded)) => {
+                let new_failure = !succeeded && state.last_sync_succeeded != Some(false);
+                state.last_sync_succeeded = Some(succeeded);
+                new_failure
+            }
             Some(Outcome::Restore(target, true)) => {
-                state.failed_restores.retain(|entry| entry != target)
+                state.failed_restores.retain(|entry| entry != target);
+                false
             }
             Some(Outcome::Restore(target, false)) if !state.failed_restores.contains(target) => {
                 state.failed_restores.push(target.clone());
+                true
             }
-            _ => {}
+            _ => false,
+        };
+        if state.active.take().is_some() {
+            state.recent.push_front(history_entry(self.id, finished));
+            state.recent.truncate(JobHistory::LIMIT);
         }
-        if let Some(ActiveJob { mut entry, .. }) = state.active.take() {
-            let time = gtk4::glib::DateTime::now_local()
-                .and_then(|time| time.format("%H:%M"))
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            entry.detail = format!("{time} · {detail}");
-            state.recent.push_front(entry);
-            state.recent.truncate(8);
+        drop(state);
+        if notify {
+            notify_failure(self.label);
         }
         self.finished = true;
     }
+}
+
+fn notify_failure(label: &'static str) {
+    glib::idle_add_once(move || {
+        if let Some(app) = gio::Application::default() {
+            let notification = gio::Notification::new(&format!("{label} mit Fehlern"));
+            notification.set_body(Some("Öffne Cloudsave, um den Auftrag zu prüfen."));
+            notification.set_default_action("app.open");
+            app.send_notification(None, &notification);
+        }
+    });
 }
 impl Drop for Job {
     fn drop(&mut self) {
