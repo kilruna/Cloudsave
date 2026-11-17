@@ -2,12 +2,29 @@
 <component type="desktop-application">
   <id>org.cloudsave.Cloudsave</id>
   <name>Cloudsave</name>
-  <summary>Ordner automatisch in der Cloud sichern</summary>
+  <summary>Back up folders automatically</summary>
+  <summary xml:lang="de">Ordner automatisch sichern</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
+  <developer id="io.github.kilruna">
+    <name translate="no">Cloudsave contributors</name>
+  </developer>
   <description>
-    <p>Cloudsave sichert ausgewählte Ordner automatisch auf ein Cloud-Ziel deiner Wahl, z. B. eine Hetzner Storage Box.</p>
+    <p>Cloudsave backs up selected folders to a local drive or WebDAV server. Restore individual files or entire folders from an existing backup.</p>
+    <p xml:lang="de">Cloudsave sichert ausgewählte Ordner automatisch auf einem lokalen Laufwerk oder einem WebDAV-Server. Stelle einzelne Dateien oder ganze Ordner aus einer vorhandenen Sicherung wieder her.</p>
+    <p>The application interface is available in German.</p>
   </description>
+  <url type="homepage">https://github.com/kilruna/Cloudsave</url>
+  <url type="vcs-browser">https://github.com/kilruna/Cloudsave</url>
+  <url type="bugtracker">https://github.com/kilruna/Cloudsave/issues</url>
+  <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/kilruna/Cloudsave/95dc5c25594c825716b41ceeef5b7c06076aa6b7/docs/images/dashboard-orange.png</image>
+      <caption>Dashboard after a successful backup</caption>
+      <caption xml:lang="de">Übersicht nach erfolgreicher Sicherung</caption>
+    </screenshot>
+  </screenshots>
   <launchable type="desktop-id">org.cloudsave.Cloudsave.desktop</launchable>
   <provides>
     <binary>cloudsave</binary>
