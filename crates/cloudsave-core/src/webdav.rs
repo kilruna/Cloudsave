@@ -167,13 +167,16 @@ impl WebdavBackend {
     }
 }
 
-impl Backend for WebdavBackend {
-    fn list(&self) -> io::Result<Vec<BackupFile>> {
-        let root = reqwest::Url::parse(&format!("{}/", self.base)).map_err(io::Error::other)?;
+impl WebdavBackend {
+    fn list_from(
+        &self,
+        root: reqwest::Url,
+        control: &TransferControl,
+        missing_ok: bool,
+    ) -> io::Result<Option<Vec<BackupFile>>> {
         let mut queue = VecDeque::from([root.clone()]);
         let mut visited = HashSet::new();
         let mut files = Vec::new();
-        let control = TransferControl::default();
         while let Some(directory) = queue.pop_front() {
             if !visited.insert(directory.to_string()) {
                 continue;
@@ -182,11 +185,14 @@ impl Backend for WebdavBackend {
                 return Err(io::Error::other("Zu viele Sicherungseinträge; bitte einen kleineren WebDAV-Unterordner als Ziel wählen"));
             }
             let method = reqwest::Method::from_bytes(b"PROPFIND").map_err(io::Error::other)?;
-            let xml = retry::run(&control, || {
+            let xml = retry::run(control, || {
                 let response = self.request(method.clone(), directory.as_str()).header("Depth", "1").header("Content-Type", "application/xml")
                     .body(r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#)
                     .send().map_err(request_error)?;
                 let status = response.status();
+                if missing_ok && status == reqwest::StatusCode::NOT_FOUND && directory == root {
+                    return Ok(None);
+                }
                 if status.as_u16() != 207 {
                     return Err(status_error(
                         status,
@@ -197,17 +203,69 @@ impl Backend for WebdavBackend {
                 ResponseBody(response)
                     .take(16 * 1024 * 1024 + 1)
                     .read_to_string(&mut xml)?;
-                Ok(xml)
+                Ok(Some(xml))
             })?;
+            let Some(xml) = xml else {
+                return Ok(None);
+            };
             if xml.len() > 16 * 1024 * 1024 {
                 return Err(io::Error::other("WebDAV-Verzeichnisantwort zu groß"));
             }
-            let (entries, collections) = parse_listing(&root, &directory, &xml)?;
+            let (entries, collections) = parse_listing(&root, &directory, &xml, missing_ok)?;
             files.extend(entries);
             queue.extend(collections);
         }
-        Ok(files)
+        Ok(Some(files))
     }
+}
+
+impl Backend for WebdavBackend {
+    fn list(&self) -> io::Result<Vec<BackupFile>> {
+        let root = reqwest::Url::parse(&format!("{}/", self.base)).map_err(io::Error::other)?;
+        Ok(self
+            .list_from(root, &TransferControl::default(), false)?
+            .unwrap_or_default())
+    }
+
+    fn list_folder(
+        &self,
+        rel: &Path,
+        control: &TransferControl,
+    ) -> io::Result<Option<Vec<BackupFile>>> {
+        crate::restore::validate_relative(rel)?;
+        let root =
+            reqwest::Url::parse(&format!("{}/", self.url_for(rel))).map_err(io::Error::other)?;
+        Ok(self.list_from(root, control, true)?.map(|mut files| {
+            for file in &mut files {
+                file.path = rel.join(&file.path);
+            }
+            files
+        }))
+    }
+
+    fn delete_folder(&self, rel: &Path) -> io::Result<()> {
+        crate::restore::validate_relative(rel)?;
+        let url = format!("{}/", self.url_for(rel));
+        let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(120))
+            .build()
+            .map_err(request_error)?;
+        let response = client
+            .delete(url)
+            .basic_auth(&self.user, Some(&self.password))
+            .send()
+            .map_err(request_error)?;
+        let status = response.status();
+        match status.as_u16() {
+            200 | 204 | 404 => Ok(()),
+            _ => Err(status_error(
+                status,
+                format!("Sicherungsordner löschen: HTTP {status}"),
+            )),
+        }
+    }
+
     fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64> {
         crate::restore::validate_relative(rel)?;
         let response = self
@@ -346,6 +404,7 @@ fn parse_listing(
     root: &reqwest::Url,
     directory: &reqwest::Url,
     xml: &str,
+    include_upload_parts: bool,
 ) -> io::Result<(Vec<BackupFile>, Vec<reqwest::Url>)> {
     let document = roxmltree::Document::parse(xml).map_err(io::Error::other)?;
     if !document
@@ -356,6 +415,7 @@ fn parse_listing(
     }
     let mut files = Vec::new();
     let mut collections = Vec::new();
+    let mut saw_root_collection = false;
     let base = percent_encoding::percent_decode_str(root.path())
         .decode_utf8()
         .map_err(io::Error::other)?;
@@ -415,17 +475,24 @@ fn parse_listing(
                     relative.display()
                 ))
             })?;
-        if is_root {
+        if is_root && !include_upload_parts {
             continue;
         }
         let property = propstat
             .children()
             .find(|node| node.has_tag_name(("DAV:", "prop")))
             .ok_or_else(|| io::Error::other("WebDAV-Eigenschaften fehlen"))?;
-        if property
+        let is_collection = property
             .descendants()
-            .any(|node| node.has_tag_name(("DAV:", "collection")))
-        {
+            .any(|node| node.has_tag_name(("DAV:", "collection")));
+        if is_root {
+            if !is_collection {
+                return Err(io::Error::other("Sicherungspfad ist kein Ordner"));
+            }
+            saw_root_collection = true;
+            continue;
+        }
+        if is_collection {
             let mut url = url;
             if !url.path().ends_with('/') {
                 url.set_path(&format!("{}/", url.path()));
@@ -433,7 +500,10 @@ fn parse_listing(
             collections.push(url);
         } else {
             let name = relative.file_name().unwrap_or_default().to_string_lossy();
-            if name.starts_with(".cloudsave-upload-") && name.ends_with(".part") {
+            if !include_upload_parts
+                && name.starts_with(".cloudsave-upload-")
+                && name.ends_with(".part")
+            {
                 continue;
             }
             let size = property
@@ -448,6 +518,11 @@ fn parse_listing(
                 size,
             });
         }
+    }
+    if include_upload_parts && directory == root && !saw_root_collection {
+        return Err(io::Error::other(
+            "WebDAV hat den Sicherungsordner nicht bestätigt",
+        ));
     }
     Ok((files, collections))
 }
@@ -542,13 +617,14 @@ mod listing_tests {
             "/backup/%2F..%2Foutside",
         ] {
             assert!(
-                parse_listing(&root, &root, &xml(href, "200 OK")).is_err(),
+                parse_listing(&root, &root, &xml(href, "200 OK"), false).is_err(),
                 "{href}"
             );
         }
-        assert!(parse_listing(&root, &root, &xml("/backup/", "403 Forbidden")).is_err());
-        assert!(parse_listing(&root, &root, "<html>not DAV</html>").is_err());
-        let (files, _) = parse_listing(&root, &root, &xml("/backup/%C3%BC.txt", "200 OK")).unwrap();
+        assert!(parse_listing(&root, &root, &xml("/backup/", "403 Forbidden"), false).is_err());
+        assert!(parse_listing(&root, &root, "<html>not DAV</html>", false).is_err());
+        let (files, _) =
+            parse_listing(&root, &root, &xml("/backup/%C3%BC.txt", "200 OK"), false).unwrap();
         assert_eq!(files[0].path, Path::new("ü.txt"));
     }
 }

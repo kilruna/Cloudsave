@@ -5,13 +5,17 @@ Run under dbus-run-session and xvfb-run; the panel watcher is a protocol fixture
 while the app, window actions, secondary process, and background sync are real.
 """
 import argparse
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 import pathlib
+from queue import Queue
 import sqlite3
 import subprocess
 import sys
+from threading import Event, Thread
 import time
+from unittest.mock import patch
 
 from gi.repository import Gio, GLib
 import run_ui_tests as ui
@@ -136,6 +140,69 @@ class SessionUI(ui.UI):
         window = self.find('GtkApplicationWindow')
         (self.root/'control/command').write_text(f'999\tclose\t{window["id"]}\t\n')
         assert self.proc.wait(timeout=8) == 0
+
+
+def steady_upload_layout():
+    uploads = Queue()
+
+    class Server(BaseHTTPRequestHandler):
+        def log_message(self, *_):
+            pass
+
+        def reply(self, status):
+            self.send_response(status)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+
+        def do_PUT(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            if self.path.startswith('/dav/source/'):
+                proceed = Event()
+                name = 'long-name.fixture' if '/nested-' in self.path else 'short-name.fixture'
+                uploads.put((name, proceed))
+                assert proceed.wait(10), 'Upload was not released by the test'
+            self.reply(201)
+
+        def do_MKCOL(self): self.reply(201)
+        def do_MOVE(self): self.reply(201)
+        def do_GET(self): self.reply(404)
+
+    app = SessionUI('upload-layout')
+    source = app.root/'source'
+    nested = source.joinpath(*(['nested-' + 'a' * 90] * 5))
+    nested.mkdir(parents=True)
+    (source/'short-name.fixture').write_bytes(b'short path')
+    (nested/'long-name.fixture').write_bytes(b'long path')
+    with HTTPServer(('127.0.0.1', 0), Server) as server:
+        server_thread = Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        app.cfg.parent.mkdir(parents=True)
+        app.cfg.write_text(f'folders = [{json.dumps(str(source))}]\n[[targets]]\n'
+                           f'type = "webdav"\nurl = "http://127.0.0.1:{server.server_port}/dav"\n'
+                           'user = "qa"\n[settings]\nauto_sync = false\n')
+        try:
+            with patch.dict(os.environ, CLOUDSAVE_WEBDAV_PASSWORD='fixture'):
+                app.launch()
+            app.click('Jetzt synchronisieren')
+            heights = {}
+            for _ in range(2):
+                name, proceed = uploads.get(timeout=8)
+                try:
+                    eventually(lambda: any(name in label for label in app.labels()))
+                    time.sleep(.1)
+                    nodes = app.tree()
+                    subtitle = next(n for n in nodes if n['type'] == 'GtkLabel' and n['mapped'] and name in n['label'])
+                    status = nodes[subtitle['parent']]
+                    banner = nodes[status['parent']]
+                    heights[name] = (subtitle['height'], banner['height'])
+                finally:
+                    proceed.set()
+            eventually(lambda: 'Alles synchronisiert' in app.labels())
+            assert heights['short-name.fixture'] == heights['long-name.fixture'], heights
+        finally:
+            app.stop()
+            server.shutdown()
+            server_thread.join(timeout=5)
 
 
 def main():
@@ -390,6 +457,8 @@ def main():
     finally:
         connection.signal_unsubscribe(subscription)
         app.stop()
+    steady_upload_layout()
+    passed('Alternating short and long WebDAV upload paths leave the dashboard banner height fixed')
     return 0
 
 

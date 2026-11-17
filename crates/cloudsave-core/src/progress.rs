@@ -16,6 +16,7 @@ pub enum Progress {
     Uploading { path: PathBuf, target: String },
     Downloading { path: PathBuf },
     Deleting { path: PathBuf, target: String },
+    RemovingFolder { name: String, target: String },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

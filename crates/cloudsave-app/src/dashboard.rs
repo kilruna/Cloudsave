@@ -1,5 +1,6 @@
-use std::cell::RefCell;
-use std::path::Path;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -94,8 +95,17 @@ fn set_status(ui: &SyncUi, status: &str) {
         _ => (Icon::Refresh, (1.0, 0.72, 0.43)),
     };
     crate::set_icon(&ui.symbol, glyph, color.0, color.1, color.2);
-    ui.progress.set_visible(status == "busy");
-    ui.controls.set_visible(status == "busy");
+    let busy = status == "busy";
+    ui.sub.set_wrap(!busy);
+    ui.sub.set_single_line_mode(busy);
+    ui.sub.set_ellipsize(if busy {
+        gtk::pango::EllipsizeMode::Middle
+    } else {
+        gtk::pango::EllipsizeMode::None
+    });
+    ui.sub.set_tooltip_text(None);
+    ui.progress.set_visible(busy);
+    ui.controls.set_visible(busy);
 }
 
 fn endpoint_card(
@@ -241,8 +251,21 @@ pub fn build(
     autostart: bool,
 ) -> gtk::Widget {
     crate::jobs::set_auto_sync(config.settings.auto_sync);
-    let config = Rc::new(RefCell::new(config.clone()));
     let state_path = Config::default_state_path();
+    let mut config = config.clone();
+    if let Err(error) = config
+        .initialize_disabled_folders(&state_path)
+        .and_then(|changed| {
+            if changed {
+                config.save(&Config::default_path())
+            } else {
+                Ok(())
+            }
+        })
+    {
+        eprintln!("Gesicherte Ordner konnten nicht übernommen werden. {error}");
+    }
+    let config = Rc::new(RefCell::new(config));
 
     let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
     page.add_css_class("dashboard");
@@ -276,7 +299,6 @@ pub fn build(
 
     let status_sub = gtk::Label::new(Some("Noch kein Sync durchgeführt"));
     status_sub.add_css_class("sync-sub");
-    status_sub.set_halign(gtk::Align::Start);
     status_sub.set_xalign(0.0);
     status_sub.set_wrap(true);
     status_sub.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -336,10 +358,32 @@ pub fn build(
     left.append(&section);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    for folder in config.borrow().folders.clone() {
-        append_folder_row(&list, &config, &folder);
+    let folder_notice = gtk::Label::new(None);
+    folder_notice.set_wrap(true);
+    folder_notice.set_xalign(0.0);
+    folder_notice.set_visible(false);
+    let removal_requested = Rc::new(Cell::new(false));
+    let folders = FolderList {
+        list: list.downgrade(),
+        window: window.downgrade(),
+        config: config.clone(),
+        notice: folder_notice.downgrade(),
+        removal_requested: removal_requested.clone(),
+        rows: Rc::new(RefCell::new(BTreeMap::new())),
+    };
+    for folder in &config.borrow().folders {
+        folders.append(&list, folder);
+    }
+    if let Some(disabled) = &config.borrow().settings.disabled_folders {
+        for folder in disabled
+            .iter()
+            .filter(|path| !config.borrow().folders.contains(path))
+        {
+            folders.append(&list, folder);
+        }
     }
     left.append(&list);
+    left.append(&folder_notice);
 
     let add_btn = gtk::Button::new();
     add_btn.add_css_class("add-btn");
@@ -351,12 +395,11 @@ pub fn build(
     add_btn.set_child(Some(&add_box));
     {
         let window = window.clone();
-        let config = config.clone();
         let list = list.clone();
         add_btn.connect_clicked(move |_| {
             let dialog = gtk::FileDialog::new();
             let window_arg = window.clone();
-            let config = config.clone();
+            let folders = folders.clone();
             let list = list.clone();
             dialog.select_folder(
                 Some(&window_arg),
@@ -364,11 +407,7 @@ pub fn build(
                 move |res| {
                     if let Ok(file) = res {
                         if let Some(path) = file.path() {
-                            if !config.borrow().folders.contains(&path) {
-                                config.borrow_mut().folders.push(path.clone());
-                                let _ = config.borrow().save(&Config::default_path());
-                                append_folder_row(&list, &config, &path);
-                            }
+                            folders.add(&list, path);
                         }
                     }
                 },
@@ -768,7 +807,8 @@ pub fn build(
                     cfg.settings.sync_interval_minutes.max(1).saturating_mul(60),
                 );
             drop(cfg);
-            if ui.btn.is_sensitive() && (due || fallback_due) {
+            if ui.btn.is_sensitive() && (due || fallback_due || removal_requested.get()) {
+                removal_requested.set(false);
                 if fallback_due {
                     watcher.update(watch_config.clone());
                 }
@@ -801,57 +841,202 @@ fn switch_row(body: &gtk::Box, name: &str, active: bool, on_toggle: impl Fn(bool
     body.append(&row);
 }
 
-fn append_folder_row(list: &gtk::Box, config: &Rc<RefCell<Config>>, path: &Path) {
-    if list.first_child().is_some() {
-        let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-        sep.add_css_class("row-sep");
-        list.append(&sep);
-    }
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    row.add_css_class("folder-row");
-    let check = gtk::CheckButton::new();
-    check.set_active(true);
-    row.append(&check);
-    row.append(&icon(Icon::Folder, 30, 0.83, 0.80, 0.77));
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
-    let label = gtk::Label::new(Some(&name));
-    label.add_css_class("folder-name");
-    label.set_xalign(0.0);
-    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    label.set_width_chars(15);
-    label.set_max_width_chars(40);
-    label.set_tooltip_text(Some(&name));
-    check.update_property(&[gtk::accessible::Property::Label(&format!("{name} sichern"))]);
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
-    text.set_hexpand(true);
-    text.append(&label);
-    let path_text = path.to_string_lossy();
-    let location = gtk::Label::new(Some(&path_text));
-    location.add_css_class("folder-path");
-    location.set_xalign(0.0);
-    location.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    location.set_width_chars(15);
-    location.set_max_width_chars(45);
-    location.set_tooltip_text(Some(&path_text));
-    text.append(&location);
-    row.append(&text);
-    let config = config.clone();
-    let path = path.to_path_buf();
-    check.connect_toggled(move |c| {
-        let mut cfg = config.borrow_mut();
-        if c.is_active() {
-            if !cfg.folders.contains(&path) {
-                cfg.folders.push(path.clone());
-            }
-        } else {
-            cfg.folders.retain(|p| p != &path);
+#[derive(Clone)]
+struct FolderList {
+    list: glib::WeakRef<gtk::Box>,
+    window: glib::WeakRef<gtk::Window>,
+    config: Rc<RefCell<Config>>,
+    notice: glib::WeakRef<gtk::Label>,
+    removal_requested: Rc<Cell<bool>>,
+    rows: Rc<RefCell<BTreeMap<PathBuf, glib::WeakRef<gtk::CheckButton>>>>,
+}
+
+impl FolderList {
+    fn notice(&self, text: Option<&str>) {
+        if let Some(label) = self.notice.upgrade() {
+            label.set_text(text.unwrap_or_default());
+            label.set_visible(text.is_some());
         }
-        let _ = cfg.save(&Config::default_path());
-    });
-    list.append(&row);
+    }
+
+    fn save(&self, updated: Config) -> bool {
+        match updated.save(&Config::default_path()) {
+            Ok(()) => {
+                *self.config.borrow_mut() = updated;
+                self.notice(None);
+                true
+            }
+            Err(error) => {
+                self.notice(Some(&format!(
+                    "Änderung konnte nicht gespeichert werden. {error}"
+                )));
+                false
+            }
+        }
+    }
+
+    fn can_add(&self, path: &Path) -> bool {
+        match self.config.borrow().folder_removal_pending(path) {
+            Ok(false) => true,
+            Ok(true) => {
+                self.notice(Some(
+                    "Für diesen Sicherungsordner steht noch eine Entfernung aus.",
+                ));
+                false
+            }
+            Err(error) => {
+                self.notice(Some(&error.to_string()));
+                false
+            }
+        }
+    }
+
+    fn add(&self, list: &gtk::Box, path: PathBuf) {
+        if let Some(check) = self
+            .rows
+            .borrow()
+            .get(&path)
+            .and_then(glib::WeakRef::upgrade)
+        {
+            check.set_active(true);
+        } else if self.can_add(&path) {
+            let mut updated = self.config.borrow().clone();
+            updated.set_folder_enabled(&path, true);
+            if self.save(updated) {
+                self.append(list, &path);
+            }
+        }
+    }
+
+    fn remove(&self, row: &gtk::Box, path: &Path) {
+        let Some(list) = self.list.upgrade() else {
+            return;
+        };
+        let mut updated = self.config.borrow().clone();
+        if let Err(error) = updated.remove_folder(path) {
+            self.notice(Some(&error.to_string()));
+            return;
+        }
+        let queued = updated.settings.pending_folder_removals.len()
+            > self.config.borrow().settings.pending_folder_removals.len();
+        if !self.save(updated) {
+            return;
+        }
+        if let Some(divider) = row.prev_sibling().or_else(|| row.next_sibling()) {
+            list.remove(&divider);
+        }
+        list.remove(row);
+        self.rows.borrow_mut().remove(path);
+        if queued {
+            self.removal_requested.set(true);
+        }
+    }
+
+    fn append(&self, list: &gtk::Box, path: &Path) {
+        if list.first_child().is_some() {
+            let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+            sep.add_css_class("row-sep");
+            list.append(&sep);
+        }
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row.add_css_class("folder-row");
+        let check = gtk::CheckButton::new();
+        check.set_active(
+            self.config
+                .borrow()
+                .folders
+                .iter()
+                .any(|folder| folder == path),
+        );
+        row.append(&check);
+        row.append(&icon(Icon::Folder, 30, 0.83, 0.80, 0.77));
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        let label = gtk::Label::new(Some(&name));
+        label.add_css_class("folder-name");
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_width_chars(15);
+        label.set_max_width_chars(40);
+        label.set_tooltip_text(Some(&name));
+        check.update_property(&[gtk::accessible::Property::Label(&format!("{name} sichern"))]);
+        let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+        text.set_hexpand(true);
+        text.append(&label);
+        let path_text = path.to_string_lossy();
+        let location = gtk::Label::new(Some(&path_text));
+        location.add_css_class("folder-path");
+        location.set_xalign(0.0);
+        location.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        location.set_width_chars(15);
+        location.set_max_width_chars(45);
+        location.set_tooltip_text(Some(&path_text));
+        text.append(&location);
+        row.append(&text);
+
+        let remove = gtk::Button::new();
+        remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
+        remove.add_css_class("folder-remove");
+        remove.set_valign(gtk::Align::Center);
+        let remove_label = format!("{name} entfernen");
+        remove.set_tooltip_text(Some(&remove_label));
+        remove.update_property(&[gtk::accessible::Property::Label(&remove_label)]);
+        row.append(&remove);
+
+        self.rows
+            .borrow_mut()
+            .insert(path.to_path_buf(), check.downgrade());
+        let folders = self.clone();
+        let source = path.to_path_buf();
+        check.connect_toggled(move |check| {
+            let mut updated = folders.config.borrow().clone();
+            if check.is_active() == updated.folders.contains(&source) {
+                return;
+            }
+            if check.is_active() && !folders.can_add(&source) {
+                check.set_active(false);
+                return;
+            }
+            updated.set_folder_enabled(&source, check.is_active());
+            if !folders.save(updated) {
+                check.set_active(!check.is_active());
+            }
+        });
+
+        let folders = self.clone();
+        let row_ref = row.downgrade();
+        let path = path.to_path_buf();
+        remove.connect_clicked(move |_| {
+            let (Some(window), Some(row)) = (folders.window.upgrade(), row_ref.upgrade()) else { return; };
+            let config = folders.config.borrow();
+            if !config.settings.auto_sync || config.targets.is_empty() {
+                drop(config);
+                folders.remove(&row, &path);
+                return;
+            }
+
+            let targets = config.targets.iter().map(cloudsave_core::target_label).collect::<Vec<_>>().join("\n");
+            let message = format!("Cloudsave entfernt die zugeordneten Sicherungskopien beim nächsten Sync an diesen Endpunkten. Deine lokalen Originaldateien bleiben erhalten.\n\n{targets}");
+            let dialog = adw::AlertDialog::new(Some(&format!("„{name}“ aus der Sicherung entfernen?")), Some(&message));
+            dialog.add_responses(&[("cancel", "Abbrechen"), ("remove", "Ordner und Kopien entfernen")]);
+            dialog.set_close_response("cancel");
+            dialog.set_default_response(Some("cancel"));
+            dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+            let row = row.downgrade();
+            let folders = folders.clone();
+            let path = path.clone();
+            dialog.connect_response(Some("remove"), move |_, _| {
+                if let Some(row) = row.upgrade() {
+                    folders.remove(&row, &path);
+                }
+            });
+            dialog.present(Some(&window));
+        });
+
+        list.append(&row);
+    }
 }
 
 fn status_sub_text(state_path: &Path) -> String {
@@ -894,10 +1079,21 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     });
 
     let ui = ui.clone();
+    let config = config.clone();
     let state_path = state_path.to_path_buf();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-        Ok(Ok(report)) => {
+        Ok(Ok(mut report)) => {
             ui.control.borrow_mut().take();
+            if !report.removed_folders.is_empty() {
+                let mut updated = config.borrow().clone();
+                updated.finish_folder_removals(&report.removed_folders);
+                match updated.save(&Config::default_path()) {
+                    Ok(()) => *config.borrow_mut() = updated,
+                    Err(error) => report.errors.push(format!(
+                        "Ordnerentfernung konnte nicht gespeichert werden. {error}"
+                    )),
+                }
+            }
             update_stats(&ui, &state_path);
             if report.cancelled {
                 set_status(&ui, "ready");
@@ -935,7 +1131,10 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         }
         Err(mpsc::TryRecvError::Empty) => {
             if let Some(active) = crate::jobs::snapshot().active {
-                ui.sub.set_text(&active.entry.detail);
+                if ui.sub.text() != active.entry.detail {
+                    ui.sub.set_text(&active.entry.detail);
+                    ui.sub.set_tooltip_text(Some(&active.entry.detail));
+                }
                 ui.pause
                     .set_label(crate::jobs::pause_label(active.control_status));
                 ui.controls

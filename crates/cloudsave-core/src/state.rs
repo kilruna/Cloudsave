@@ -167,6 +167,32 @@ impl State {
         }
     }
 
+    pub(crate) fn remove_folder_records(&self, prefix: &str, source: &Path) -> Result<usize> {
+        let transaction = self.conn.unchecked_transaction()?;
+        let params = params![prefix, source.to_string_lossy()];
+        let removed = transaction.execute(
+            "DELETE FROM files WHERE path IN (
+                SELECT path FROM file_sources WHERE substr(path, 1, length(?1)) = ?1 AND source = ?2
+            )",
+            params,
+        )?;
+        transaction.execute(
+            "DELETE FROM file_sources WHERE substr(path, 1, length(?1)) = ?1 AND source = ?2",
+            params,
+        )?;
+        transaction.commit()?;
+        Ok(removed)
+    }
+
+    pub(crate) fn sources_for_target(&self, target_key: &str) -> Result<Vec<std::path::PathBuf>> {
+        let prefix = format!("{target_key}::");
+        let mut query = self.conn.prepare(
+            "SELECT DISTINCT source FROM file_sources WHERE substr(path, 1, length(?1)) = ?1",
+        )?;
+        let rows = query.query_map([prefix], |row| row.get::<_, String>(0).map(Into::into))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     pub fn count(&self) -> Result<i64> {
         let n: i64 = self
             .conn

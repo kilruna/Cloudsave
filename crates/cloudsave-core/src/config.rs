@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::{Error, Result};
@@ -27,6 +27,7 @@ struct ConfigCompat {
 fn legacy_settings() -> Settings {
     Settings {
         sync_mode: SyncMode::Mirror,
+        disabled_folders: None,
         ..Settings::default()
     }
 }
@@ -54,8 +55,18 @@ pub enum Target {
     Webdav { url: String, user: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FolderRemoval {
+    pub source: PathBuf,
+    pub namespace: String,
+    pub targets: Vec<Target>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
+    /// Missing in older profiles that used the selected folders as their entire list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_folders: Option<Vec<PathBuf>>,
     /// Keep remote folder names stable when restoring onto different local paths.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub folder_names: BTreeMap<PathBuf, String>,
@@ -65,6 +76,8 @@ pub struct Settings {
     /// A restart must return to recovery before any automatic upload can run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_recovery: Option<Target>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_folder_removals: Vec<FolderRemoval>,
     #[serde(default)]
     pub exclude_patterns: Vec<String>,
     #[serde(default = "legacy_sync_mode")]
@@ -102,9 +115,11 @@ fn default_interval() -> u64 {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            disabled_folders: Some(Vec::new()),
             folder_names: BTreeMap::new(),
             folder_home_paths: BTreeMap::new(),
             pending_recovery: None,
+            pending_folder_removals: Vec::new(),
             exclude_patterns: Vec::new(),
             sync_mode: SyncMode::Backup,
             auto_sync: default_true(),
@@ -116,6 +131,91 @@ impl Default for Settings {
 }
 
 impl Config {
+    /// Expose previously unchecked folders from this profile's saved ownership records.
+    pub fn initialize_disabled_folders(&mut self, state_path: &Path) -> Result<bool> {
+        if self.settings.disabled_folders.is_some() {
+            return Ok(false);
+        }
+        let mut disabled = BTreeSet::new();
+        if state_path.is_file() {
+            let state = crate::State::open(state_path)?;
+            for target in &self.targets {
+                disabled.extend(state.sources_for_target(&crate::engine::target_prefix(target)?)?);
+            }
+        }
+        disabled.retain(|path| {
+            !self.folders.contains(path)
+                && !self
+                    .settings
+                    .pending_folder_removals
+                    .iter()
+                    .any(|removal| removal.source == *path)
+        });
+        self.settings.disabled_folders = Some(disabled.into_iter().collect());
+        Ok(true)
+    }
+
+    pub fn set_folder_enabled(&mut self, source: &Path, enabled: bool) {
+        let disabled = self.settings.disabled_folders.get_or_insert_default();
+        if enabled {
+            disabled.retain(|folder| folder != source);
+            if !self.folders.iter().any(|folder| folder == source) {
+                self.folders.push(source.to_path_buf());
+            }
+        } else {
+            self.folders.retain(|folder| folder != source);
+            if !disabled.iter().any(|folder| folder == source) {
+                disabled.push(source.to_path_buf());
+            }
+        }
+    }
+
+    /// Capture the current targets so later endpoint additions cannot inherit a removal.
+    pub fn remove_folder(&mut self, source: &Path) -> Result<()> {
+        if self.settings.auto_sync && !self.targets.is_empty() {
+            let namespace = crate::recovery::namespace(self, source)?;
+            if self
+                .settings
+                .pending_folder_removals
+                .iter()
+                .all(|item| item.source != source)
+            {
+                self.settings.pending_folder_removals.push(FolderRemoval {
+                    source: source.to_path_buf(),
+                    namespace,
+                    targets: self.targets.clone(),
+                });
+            }
+        }
+        self.folders.retain(|folder| folder != source);
+        if let Some(disabled) = &mut self.settings.disabled_folders {
+            disabled.retain(|folder| folder != source);
+        }
+        Ok(())
+    }
+
+    pub fn folder_removal_pending(&self, source: &Path) -> Result<bool> {
+        let namespace = crate::recovery::namespace(self, source)?;
+        Ok(self
+            .settings
+            .pending_folder_removals
+            .iter()
+            .any(|item| item.namespace == namespace))
+    }
+
+    pub fn finish_folder_removals(&mut self, completed: &[(PathBuf, Target)]) {
+        for removal in &mut self.settings.pending_folder_removals {
+            removal.targets.retain(|target| {
+                !completed
+                    .iter()
+                    .any(|(source, done)| source == &removal.source && done == target)
+            });
+        }
+        self.settings
+            .pending_folder_removals
+            .retain(|item| !item.targets.is_empty());
+    }
+
     pub fn load(path: &Path) -> Result<Config> {
         let data = std::fs::read_to_string(path)
             .map_err(|e| Error(format!("Config nicht lesbar ({}): {}", path.display(), e)))?;

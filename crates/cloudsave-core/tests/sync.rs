@@ -532,3 +532,117 @@ fn same_size_same_second_changes_are_uploaded_without_reuploading_legacy_unchang
     assert_eq!(report.uploaded, 0);
     assert_eq!(report.skipped, 1);
 }
+
+#[test]
+fn explicit_live_removal_survives_restart_and_retries_only_the_failed_target() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    let state = temp.path().join("state.db");
+    let config_path = temp.path().join("config.toml");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("nested/file"), b"fixture").unwrap();
+    let mut config = make_config(&source, &first);
+    config.settings.sync_mode = SyncMode::Backup;
+    config.targets.push(Target::Local {
+        path: second.clone(),
+    });
+    assert!(sync(&config, &state).unwrap().errors.is_empty());
+
+    let unavailable = temp.path().join("unavailable");
+    fs::rename(&second, &unavailable).unwrap();
+    fs::write(&second, b"unavailable mount").unwrap();
+    config.remove_folder(&source).unwrap();
+    config.save(&config_path).unwrap();
+
+    let mut config = Config::load(&config_path).unwrap();
+    let report = sync(&config, &state).unwrap();
+    assert!(!report.errors.is_empty());
+    assert_eq!(
+        report.removed_folders,
+        [(source.clone(), config.targets[0].clone())]
+    );
+    assert!(!first.join("source").exists());
+    assert!(unavailable.join("source/nested/file").exists());
+    let inventory = cloudsave_core::discover_backup(&config.targets[0]).unwrap();
+    assert!(inventory.folders.is_empty());
+    config.finish_folder_removals(&report.removed_folders);
+    assert_eq!(
+        config.settings.pending_folder_removals[0].targets,
+        [config.targets[1].clone()]
+    );
+
+    fs::remove_file(&second).unwrap();
+    fs::rename(&unavailable, &second).unwrap();
+    let report = sync(&config, &state).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    config.finish_folder_removals(&report.removed_folders);
+    assert!(config.settings.pending_folder_removals.is_empty());
+    assert!(!second.join("source").exists());
+    assert_eq!(fs::read(source.join("nested/file")).unwrap(), b"fixture");
+    assert_eq!(State::open(&state).unwrap().count().unwrap(), 0);
+}
+
+#[test]
+fn explicit_folder_removal_preserves_unknown_files_and_offline_backup() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let target = temp.path().join("target");
+    let state = temp.path().join("state.db");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("managed"), b"fixture").unwrap();
+    let mut config = make_config(&source, &target);
+    assert!(sync(&config, &state).unwrap().errors.is_empty());
+
+    let mut paused = config.clone();
+    paused.settings.auto_sync = false;
+    paused.remove_folder(&source).unwrap();
+    assert!(paused.settings.pending_folder_removals.is_empty());
+    assert!(sync(&paused, &state).unwrap().errors.is_empty());
+    assert!(target.join("source/managed").exists());
+
+    fs::write(target.join("source/unmanaged"), b"foreign").unwrap();
+    config.remove_folder(&source).unwrap();
+    let report = sync(&config, &state).unwrap();
+    assert!(report.errors[0].contains("nicht zugeordnet"));
+    assert!(report.removed_folders.is_empty());
+    assert!(target.join("source/managed").exists());
+    assert_eq!(
+        fs::read(target.join("source/unmanaged")).unwrap(),
+        b"foreign"
+    );
+    assert!(source.join("managed").exists());
+}
+
+#[test]
+fn update_keeps_previously_unchecked_folders_available_for_explicit_removal() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let target = temp.path().join("target");
+    let state = temp.path().join("state.db");
+    let config_path = temp.path().join("config.toml");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("file"), b"already backed up").unwrap();
+    let mut config = make_config(&source, &target);
+    assert!(sync(&config, &state).unwrap().errors.is_empty());
+
+    config.folders.clear();
+    config.settings.disabled_folders = None;
+    config.settings.auto_sync = false;
+    config.save(&config_path).unwrap();
+    let mut migrated = Config::load(&config_path).unwrap();
+    assert!(migrated.initialize_disabled_folders(&state).unwrap());
+    assert_eq!(
+        migrated.settings.disabled_folders,
+        Some(vec![source.clone()])
+    );
+    assert!(migrated.folders.is_empty());
+
+    migrated.remove_folder(&source).unwrap();
+    migrated.save(&config_path).unwrap();
+    let mut restarted = Config::load(&config_path).unwrap();
+    assert!(!restarted.initialize_disabled_folders(&state).unwrap());
+    assert_eq!(restarted.settings.disabled_folders, Some(vec![]));
+    assert!(target.join("source/file").exists());
+}

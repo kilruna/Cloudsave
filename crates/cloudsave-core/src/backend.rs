@@ -23,6 +23,23 @@ pub trait Backend {
         self.put(rel, file, size)
     }
     fn delete(&self, rel: &Path) -> io::Result<()>;
+    /// List all files in a specific managed folder, with paths relative to the endpoint.
+    fn list_folder(
+        &self,
+        _rel: &Path,
+        _control: &TransferControl,
+    ) -> io::Result<Option<Vec<BackupFile>>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Ordnerentfernung wird nicht unterstützt",
+        ))
+    }
+    fn delete_folder(&self, _rel: &Path) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Ordnerentfernung wird nicht unterstützt",
+        ))
+    }
 }
 
 pub struct LocalBackend {
@@ -133,6 +150,46 @@ impl Backend for LocalBackend {
             fs::remove_file(&p)?;
         }
         Ok(())
+    }
+
+    fn list_folder(
+        &self,
+        rel: &Path,
+        control: &TransferControl,
+    ) -> io::Result<Option<Vec<BackupFile>>> {
+        let path = crate::restore::safe_path(&self.root, rel, false)?;
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Ok(info) if info.is_dir() => {}
+            Ok(_) => return Err(io::Error::other("Sicherungspfad ist kein Ordner")),
+            Err(error) => return Err(error),
+        }
+        let mut files = Vec::new();
+        for entry in walkdir::WalkDir::new(&path).follow_links(false) {
+            control.checkpoint()?;
+            let entry = entry.map_err(io::Error::other)?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            if !entry.file_type().is_file() {
+                return Err(io::Error::other(
+                    "Sicherungsordner enthält einen Symlink oder eine Spezialdatei",
+                ));
+            }
+            files.push(BackupFile {
+                path: rel.join(entry.path().strip_prefix(&path).map_err(io::Error::other)?),
+                size: Some(entry.metadata().map_err(io::Error::other)?.len()),
+            });
+        }
+        Ok(Some(files))
+    }
+
+    fn delete_folder(&self, rel: &Path) -> io::Result<()> {
+        let path = crate::restore::safe_path(&self.root, rel, false)?;
+        match fs::remove_dir_all(path) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        }
     }
 }
 

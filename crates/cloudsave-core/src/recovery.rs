@@ -51,7 +51,7 @@ pub(crate) fn namespace(config: &Config, folder: &Path) -> Result<String> {
     validate_namespace(&name)?;
     Ok(name)
 }
-fn validate_namespace(name: &str) -> Result<()> {
+pub(crate) fn validate_namespace(name: &str) -> Result<()> {
     crate::restore::validate_relative(Path::new(name))?;
     if Path::new(name).components().count() != 1 || name.contains('/') || name == ".cloudsave" {
         return Err(Error(
@@ -145,15 +145,38 @@ pub(crate) fn save_catalog(
         version: 1,
         folders: folders.into_values().collect(),
     };
-    let text = toml::to_string(&catalog)?;
-    if text.len() > LIMIT {
-        return Err(Error("Ordnerzuordnung ist zu groß".into()));
-    }
     if old
         .as_ref()
         .is_some_and(|old| old.folders == catalog.folders)
     {
         return Ok(());
+    }
+    write_catalog(backend, &catalog, control)
+}
+
+pub(crate) fn forget_folder(
+    backend: &dyn Backend,
+    name: &str,
+    control: &TransferControl,
+) -> Result<()> {
+    if let Some(mut catalog) = read_catalog(backend, control)? {
+        let count = catalog.folders.len();
+        catalog.folders.retain(|folder| folder.namespace != name);
+        if catalog.folders.len() != count {
+            write_catalog(backend, &catalog, control)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_catalog(
+    backend: &dyn Backend,
+    catalog: &Catalog,
+    control: &TransferControl,
+) -> Result<()> {
+    let text = toml::to_string(catalog)?;
+    if text.len() > LIMIT {
+        return Err(Error("Ordnerzuordnung ist zu groß".into()));
     }
     crate::retry::run(control, || backend.mkdirs(Path::new(CATALOG)))?;
     crate::retry::run(control, || {

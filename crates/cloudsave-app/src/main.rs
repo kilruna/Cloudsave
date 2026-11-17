@@ -57,6 +57,7 @@ pub(crate) enum Icon {
     Check,
     Warning,
     Refresh,
+    Minus,
 }
 
 fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
@@ -208,6 +209,11 @@ pub(crate) fn set_icon(area: &gtk::DrawingArea, kind: Icon, red: f64, green: f64
                         cr.move_to(52.0, 12.0);
                         cr.line_to(52.0, 25.0);
                         cr.line_to(39.0, 25.0);
+                    }
+                    Icon::Minus => {
+                        cr.set_line_width(8.0);
+                        cr.move_to(12.0, 32.0);
+                        cr.line_to(52.0, 32.0);
                     }
                     _ => {}
                 }

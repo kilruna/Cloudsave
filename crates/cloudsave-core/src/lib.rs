@@ -15,7 +15,7 @@ mod webdav;
 
 pub use autostart::{autostart_enabled, set_autostart};
 pub use backend::{backend_for, Backend, LocalBackend};
-pub use config::{Config, Settings, SyncMode, Target};
+pub use config::{Config, FolderRemoval, Settings, SyncMode, Target};
 pub use engine::{sync, sync_controlled, sync_with_progress, target_label, SyncReport};
 pub use exclusions::validate_exclusion_patterns;
 pub use progress::{Progress, RetryProgress, TransferControl, TransferProgress, TransferStatus};

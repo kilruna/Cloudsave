@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use crate::backend::{backend_for, Backend};
 use crate::config::{Config, Target};
 use crate::state::State;
-use crate::{retry, Result, TransferControl};
+use crate::{retry, Error, FolderRemoval, Result, TransferControl};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SyncReport {
@@ -16,6 +16,7 @@ pub struct SyncReport {
     pub bytes: u64,
     pub cancelled: bool,
     pub errors: Vec<String>,
+    pub removed_folders: Vec<(PathBuf, Target)>,
 }
 
 pub(crate) fn mtime_stamp(meta: &fs::Metadata) -> i64 {
@@ -102,6 +103,36 @@ fn sync_run(
     }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
     let state = State::open(state_path)?;
+
+    for removal in &config.settings.pending_folder_removals {
+        for target in removal
+            .targets
+            .iter()
+            .filter(|target| config.targets.contains(target))
+        {
+            control.checkpoint()?;
+            progress(crate::Progress::RemovingFolder {
+                name: removal.namespace.clone(),
+                target: target_label(target),
+            });
+            match remove_backup_folder(config, &state, removal, target, control) {
+                Ok(count) => {
+                    report.deleted += count;
+                    report
+                        .removed_folders
+                        .push((removal.source.clone(), target.clone()));
+                }
+                Err(error) => {
+                    control.check_cancelled()?;
+                    report.errors.push(format!(
+                        "{} · Sicherungsordner {} entfernen: {error}",
+                        target_label(target),
+                        removal.namespace
+                    ));
+                }
+            }
+        }
+    }
 
     let mut scanned: HashMap<String, (PathBuf, i64, i64)> = HashMap::new();
     let mut sources = HashMap::new();
@@ -320,6 +351,59 @@ fn sync_run(
     }
 
     Ok(())
+}
+
+fn remove_backup_folder(
+    config: &Config,
+    state: &State,
+    removal: &FolderRemoval,
+    target: &Target,
+    control: &TransferControl,
+) -> Result<usize> {
+    crate::recovery::validate_namespace(&removal.namespace)?;
+    for folder in &config.folders {
+        if folder == &removal.source
+            || crate::recovery::namespace(config, folder)? == removal.namespace
+        {
+            return Err(Error(
+                "Sicherungsordner wird von einer aktiven Quelle verwendet".into(),
+            ));
+        }
+    }
+    let folder = Path::new(&removal.namespace);
+    if let Target::Local { path } = target {
+        let destination = crate::paths::resolved(&path.join(folder))?;
+        let source = crate::paths::resolved(&removal.source)?;
+        if destination.starts_with(&source) || source.starts_with(&destination) {
+            return Err(Error(
+                "Quelle und zu löschender Sicherungsordner überlappen sich".into(),
+            ));
+        }
+    }
+    let backend = crate::restore::existing_backend(target)?;
+    let target_key = target_prefix(target)?;
+    if let Some(files) = backend.list_folder(folder, control)? {
+        for file in files {
+            control.checkpoint()?;
+            let key = format!("{target_key}::{}", file.path.display());
+            let owned = file.path.starts_with(folder)
+                && state.source(&key)?.as_ref() == Some(&removal.source)
+                && state.get(&key)?.is_some_and(|record| {
+                    file.size
+                        .is_none_or(|size| u64::try_from(record.size) == Ok(size))
+                });
+            if !owned {
+                return Err(Error(format!("{} ist dieser Quelle nicht zugeordnet. Der Sicherungsordner wurde beibehalten.", file.path.display())));
+            }
+        }
+        control.checkpoint()?;
+        backend.delete_folder(folder)?;
+    }
+    crate::recovery::forget_folder(&*backend, &removal.namespace, control)?;
+    state.remove_folder_records(
+        &format!("{target_key}::{}/", removal.namespace),
+        &removal.source,
+    )
 }
 
 fn upload_one(
