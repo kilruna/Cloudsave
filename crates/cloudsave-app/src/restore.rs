@@ -263,7 +263,9 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
             }
             busy.set(true);
             root.set_sensitive(false);
-            status.set_text("Dateien werden wiederhergestellt …");
+            status.set_text(
+                "Dateien werden wiederhergestellt … Pause und Abbruch im Systemabschnitt.",
+            );
             let files = files.clone();
             let loaded = loaded.clone();
             let destination = destination.clone();
@@ -272,19 +274,28 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
             let status = status.clone();
             background(
                 move || {
-                    crate::jobs::restore(&target, |job| {
-                        cloudsave_core::restore_with_progress(
-                            &target,
-                            &selection,
-                            &destination_path,
-                            |progress| job.progress(progress),
-                        )
-                    })
+                    crate::jobs::restore(
+                        &target,
+                        cloudsave_core::TransferControl::default(),
+                        |job| {
+                            cloudsave_core::restore_controlled(
+                                &target,
+                                &selection,
+                                &destination_path,
+                                job.control(),
+                                |progress| job.progress(progress),
+                            )
+                        },
+                    )
                 },
                 move |result| {
                     busy.set(false);
                     root.set_sensitive(true);
                     match result {
+                        Ok(report) if report.cancelled => status.set_text(&format!(
+                            "Wiederherstellung abgebrochen · {} Datei(en) wiederhergestellt",
+                            report.restored
+                        )),
                         Ok(report) if report.errors.is_empty() => status.set_text(&format!(
                             "{} Datei(en) wiederhergestellt · {} B",
                             report.restored, report.bytes

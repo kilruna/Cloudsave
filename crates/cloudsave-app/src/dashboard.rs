@@ -10,7 +10,8 @@ use gtk4 as gtk;
 use libadwaita as adw;
 
 use cloudsave_core::{
-    ChangeWatcher, Config, State, SyncMode, SyncReport, Target, WatchConfig, WatchEvent,
+    ChangeWatcher, Config, State, SyncMode, SyncReport, Target, TransferControl, TransferStatus,
+    WatchConfig, WatchEvent,
 };
 
 use crate::{icon, Icon};
@@ -20,6 +21,9 @@ struct SyncUi {
     title: gtk::Label,
     sub: gtk::Label,
     progress: gtk::ProgressBar,
+    controls: gtk::Box,
+    pause: gtk::Button,
+    control: Rc<RefCell<Option<TransferControl>>>,
     btn: gtk::Button,
     banner: gtk::Box,
     symbol: gtk::DrawingArea,
@@ -63,20 +67,8 @@ fn update_stats(ui: &SyncUi, state_path: &Path) {
     match values {
         Ok((count, size, last)) => {
             ui.files.set_text(&count.to_string());
-            let mut bytes = size.max(0) as f64;
-            let mut unit = "B";
-            for next in ["KiB", "MiB", "GiB", "TiB"] {
-                if bytes < 1024.0 {
-                    break;
-                }
-                bytes /= 1024.0;
-                unit = next;
-            }
-            ui.size.set_text(&if unit == "B" {
-                format!("{size} B")
-            } else {
-                format!("{bytes:.1} {unit}").replace('.', ",")
-            });
+            ui.size
+                .set_text(&crate::jobs::format_bytes(size.max(0) as f64));
             ui.last_sync.set_text(&if last.is_some() {
                 fmt_rel(last)
             } else {
@@ -103,6 +95,7 @@ fn set_status(ui: &SyncUi, status: &str) {
     };
     crate::set_icon(&ui.symbol, glyph, color.0, color.1, color.2);
     ui.progress.set_visible(status == "busy");
+    ui.controls.set_visible(status == "busy");
 }
 
 fn endpoint_card(
@@ -296,6 +289,28 @@ pub fn build(
     progress.set_hexpand(true);
     progress.set_visible(false);
     status_text.append(&progress);
+
+    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    controls.set_visible(false);
+    let pause = gtk::Button::with_label("Pausieren");
+    pause.set_tooltip_text(Some("Nach der laufenden Datei pausieren"));
+    let cancel = gtk::Button::with_label("Abbrechen");
+    controls.append(&pause);
+    controls.append(&cancel);
+    status_text.append(&controls);
+    let control = Rc::new(RefCell::new(None::<TransferControl>));
+    let pause_control = control.clone();
+    pause.connect_clicked(move |_| {
+        if let Some(control) = pause_control.borrow().as_ref() {
+            control.toggle_pause();
+        }
+    });
+    let cancel_control = control.clone();
+    cancel.connect_clicked(move |_| {
+        if let Some(control) = cancel_control.borrow().as_ref() {
+            control.cancel();
+        }
+    });
 
     let auto_status = gtk::Label::new(None);
     auto_status.set_wrap(true);
@@ -628,6 +643,9 @@ pub fn build(
         title: status_title.clone(),
         sub: status_sub.clone(),
         progress: progress.clone(),
+        controls,
+        pause,
+        control,
         btn: sync_btn.clone(),
         banner: banner.clone(),
         symbol: status_symbol.clone(),
@@ -862,12 +880,16 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     ui.title.set_text("Sync läuft");
     ui.sub.set_text("Dateien werden abgeglichen …");
     ui.progress.set_fraction(0.0);
+    ui.pause.set_label("Pausieren");
+    ui.controls.set_sensitive(true);
 
     let cfg = config.borrow().clone();
+    let control = TransferControl::default();
+    *ui.control.borrow_mut() = Some(control.clone());
     let state_path_owned = state_path.to_path_buf();
     let (tx, rx) = mpsc::channel::<Result<SyncReport, String>>();
     std::thread::spawn(move || {
-        let res = crate::jobs::sync(&cfg, &state_path_owned).map_err(|e| e.to_string());
+        let res = crate::jobs::sync(&cfg, &state_path_owned, control).map_err(|e| e.to_string());
         let _ = tx.send(res);
     });
 
@@ -875,8 +897,14 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     let state_path = state_path.to_path_buf();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok(report)) => {
+            ui.control.borrow_mut().take();
             update_stats(&ui, &state_path);
-            if report.errors.is_empty() {
+            if report.cancelled {
+                set_status(&ui, "ready");
+                ui.title.set_text("Sync abgebrochen");
+                ui.sub
+                    .set_text(&format!("{} Dateien gesichert", report.uploaded));
+            } else if report.errors.is_empty() {
                 set_status(&ui, "success");
                 ui.title.set_text("Alles synchronisiert");
                 ui.sub.set_text(&status_sub_text(&state_path));
@@ -896,6 +924,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
             glib::ControlFlow::Break
         }
         Ok(Err(e)) => {
+            ui.control.borrow_mut().take();
             set_status(&ui, "error");
             update_stats(&ui, &state_path);
             ui.title.set_text("Sync fehlgeschlagen");
@@ -905,10 +934,23 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
             glib::ControlFlow::Break
         }
         Err(mpsc::TryRecvError::Empty) => {
-            ui.progress.pulse();
+            if let Some(active) = crate::jobs::snapshot().active {
+                ui.sub.set_text(&active.entry.detail);
+                ui.pause
+                    .set_label(crate::jobs::pause_label(active.control_status));
+                ui.controls
+                    .set_sensitive(active.control_status != TransferStatus::Cancelling);
+                if let Some((bytes, total)) = active.fraction {
+                    ui.progress
+                        .set_fraction((bytes as f64 / total as f64).min(1.0));
+                } else if active.control_status == TransferStatus::Running {
+                    ui.progress.pulse();
+                }
+            }
             glib::ControlFlow::Continue
         }
         Err(mpsc::TryRecvError::Disconnected) => {
+            ui.control.borrow_mut().take();
             set_status(&ui, "error");
             ui.title.set_text("Sync abgebrochen");
             ui.sub

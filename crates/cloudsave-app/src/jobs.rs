@@ -1,5 +1,7 @@
 //! Small, bounded session activity shared by workers and the tray. No GTK on workers.
-use cloudsave_core::{Progress, RestoreReport, SyncReport, Target};
+use cloudsave_core::{
+    Progress, RestoreReport, SyncReport, Target, TransferControl, TransferProgress, TransferStatus,
+};
 use std::{
     collections::VecDeque,
     sync::{Mutex, OnceLock},
@@ -13,7 +15,7 @@ pub struct Entry {
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snapshot {
-    pub active: Vec<Entry>,
+    pub active: Option<ActiveEntry>,
     pub recent: Vec<Entry>,
     pub status: TrayStatus,
     pub has_error: bool,
@@ -49,10 +51,22 @@ impl TrayStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveEntry {
+    pub entry: Entry,
+    pub control_status: TransferStatus,
+    pub fraction: Option<(u64, u64)>,
+}
+
+struct ActiveJob {
+    entry: Entry,
+    control: TransferControl,
+}
+
 #[derive(Default)]
 struct State {
     next: u64,
-    active: Vec<Entry>,
+    active: Option<ActiveJob>,
     recent: VecDeque<Entry>,
     auto_sync_paused: bool,
     last_sync_succeeded: Option<bool>,
@@ -65,8 +79,11 @@ impl State {
     }
 
     fn tray_status(&self) -> TrayStatus {
-        if !self.active.is_empty() {
-            TrayStatus::Busy
+        if let Some(job) = &self.active {
+            match job.control.status() {
+                TransferStatus::Paused => TrayStatus::Paused,
+                _ => TrayStatus::Busy,
+            }
         } else if self.has_error() {
             TrayStatus::Error
         } else if self.auto_sync_paused {
@@ -89,10 +106,89 @@ fn state() -> std::sync::MutexGuard<'static, State> {
 pub fn snapshot() -> Snapshot {
     let state = state();
     Snapshot {
-        active: state.active.clone(),
+        active: state.active.as_ref().map(ActiveJob::snapshot),
         recent: state.recent.iter().cloned().collect(),
         status: state.tray_status(),
         has_error: state.has_error(),
+    }
+}
+
+impl ActiveJob {
+    fn snapshot(&self) -> ActiveEntry {
+        let control_status = self.control.status();
+        let measurement = self.control.progress();
+        let mut entry = self.entry.clone();
+        entry.detail = match control_status {
+            TransferStatus::Running => match &measurement {
+                Some(file) => format!("{} · {}", transfer_detail(file), entry.detail),
+                None => entry.detail,
+            },
+            TransferStatus::PauseRequested => {
+                format!("Pause nach der aktuellen Datei · {}", entry.detail)
+            }
+            TransferStatus::Paused => "Auftrag pausiert".into(),
+            TransferStatus::Cancelling => "Abbruch angefordert …".into(),
+        };
+        ActiveEntry {
+            entry,
+            control_status,
+            fraction: measurement.and_then(|file| {
+                file.total
+                    .filter(|total| *total > 0)
+                    .map(|total| (file.bytes, total))
+            }),
+        }
+    }
+}
+
+pub fn operate(id: u64, action: impl FnOnce(&TransferControl)) {
+    if let Some(job) = state().active.as_ref().filter(|job| job.entry.id == id) {
+        action(&job.control);
+    }
+}
+
+fn transfer_detail(file: &TransferProgress) -> String {
+    let bytes = format_bytes(file.bytes as f64);
+    let transferred = match file.total {
+        Some(total) => format!("{bytes} / {}", format_bytes(total as f64)),
+        None => bytes,
+    };
+    let seconds = file.elapsed.as_secs_f64();
+    if file.bytes == 0 || seconds < 0.25 {
+        return transferred;
+    }
+    let speed = file.bytes as f64 / seconds;
+    let remaining = file
+        .total
+        .map(|total| total.saturating_sub(file.bytes) as f64 / speed);
+    let rate = format!("{transferred} · {}/s", format_bytes(speed));
+    match remaining {
+        Some(time) if time >= 60.0 => format!("{rate} · noch ca. {:.0} Min", time / 60.0),
+        Some(time) => format!("{rate} · noch ca. {:.0} s", time.ceil()),
+        None => rate,
+    }
+}
+
+pub fn format_bytes(mut bytes: f64) -> String {
+    let mut unit = "B";
+    for next in ["KiB", "MiB", "GiB", "TiB"] {
+        if bytes < 1024.0 {
+            break;
+        }
+        bytes /= 1024.0;
+        unit = next;
+    }
+    if unit == "B" {
+        format!("{bytes:.0} B")
+    } else {
+        format!("{bytes:.1} {unit}").replace('.', ",")
+    }
+}
+
+pub fn pause_label(status: TransferStatus) -> &'static str {
+    match status {
+        TransferStatus::Paused | TransferStatus::PauseRequested => "Fortsetzen",
+        _ => "Pausieren",
     }
 }
 
@@ -108,22 +204,30 @@ enum Outcome<'a> {
 #[must_use]
 pub struct Job {
     id: u64,
+    control: TransferControl,
     finished: bool,
 }
 impl Job {
-    pub fn start(label: &str) -> Self {
+    fn start(label: &str, control: TransferControl) -> Self {
         let mut state = state();
         state.next += 1;
         let id = state.next;
-        state.active.push(Entry {
-            id,
-            label: label.into(),
-            detail: "Wird vorbereitet …".into(),
+        state.active = Some(ActiveJob {
+            entry: Entry {
+                id,
+                label: label.into(),
+                detail: "Wird vorbereitet …".into(),
+            },
+            control: control.clone(),
         });
         Self {
             id,
+            control,
             finished: false,
         }
+    }
+    pub fn control(&self) -> &TransferControl {
+        &self.control
     }
     pub fn progress(&self, progress: Progress) {
         let detail = match progress {
@@ -139,12 +243,16 @@ impl Job {
                 format!("Spiegelung löscht: {} · {target}", path.display())
             }
         };
-        if let Some(entry) = state().active.iter_mut().find(|entry| entry.id == self.id) {
-            entry.detail = detail;
+        if let Some(job) = state()
+            .active
+            .as_mut()
+            .filter(|job| job.entry.id == self.id)
+        {
+            job.entry.detail = detail;
         }
     }
-    fn finish(mut self, detail: String, outcome: Outcome<'_>) {
-        self.complete(detail, Some(outcome));
+    fn finish(mut self, detail: String, outcome: Option<Outcome<'_>>) {
+        self.complete(detail, outcome);
     }
     fn complete(&mut self, detail: String, outcome: Option<Outcome<'_>>) {
         let mut state = state();
@@ -158,8 +266,7 @@ impl Job {
             }
             _ => {}
         }
-        if let Some(index) = state.active.iter().position(|entry| entry.id == self.id) {
-            let mut entry = state.active.remove(index);
+        if let Some(ActiveJob { mut entry, .. }) = state.active.take() {
             let time = gtk4::glib::DateTime::now_local()
                 .and_then(|time| time.format("%H:%M"))
                 .map(|s| s.to_string())
@@ -181,14 +288,17 @@ impl Drop for Job {
 pub fn sync(
     config: &cloudsave_core::Config,
     state: &std::path::Path,
+    control: TransferControl,
 ) -> cloudsave_core::Result<SyncReport> {
     let _operation = OPERATIONS.try_lock().map_err(|_| {
         cloudsave_core::Error("Ein anderer Datei-Auftrag läuft bereits. Bitte kurz warten.".into())
     })?;
-    let job = Job::start("Synchronisierung");
-    let result =
-        cloudsave_core::sync_with_progress(config, state, |progress| job.progress(progress));
+    let job = Job::start("Synchronisierung", control);
+    let result = cloudsave_core::sync_controlled(config, state, job.control(), |progress| {
+        job.progress(progress)
+    });
     let detail = match &result {
+        Ok(report) if report.cancelled => format!("Abgebrochen · {} hochgeladen", report.uploaded),
         Ok(report) => format!(
             "{} hochgeladen · {} gelöscht · {} unverändert · {} Fehler",
             report.uploaded,
@@ -200,20 +310,29 @@ pub fn sync(
     };
     job.finish(
         detail,
-        Outcome::Sync(result.as_ref().is_ok_and(|report| report.errors.is_empty())),
+        match &result {
+            Ok(report) if !report.errors.is_empty() => Some(Outcome::Sync(false)),
+            Ok(report) if report.cancelled => None,
+            Ok(_) => Some(Outcome::Sync(true)),
+            Err(_) => Some(Outcome::Sync(false)),
+        },
     );
     result
 }
 pub fn restore(
     target: &Target,
+    control: TransferControl,
     task: impl FnOnce(&Job) -> cloudsave_core::Result<RestoreReport>,
 ) -> cloudsave_core::Result<RestoreReport> {
     let _operation = OPERATIONS.try_lock().map_err(|_| {
         cloudsave_core::Error("Ein anderer Datei-Auftrag läuft bereits. Bitte kurz warten.".into())
     })?;
-    let job = Job::start("Wiederherstellung");
+    let job = Job::start("Wiederherstellung", control);
     let result = task(&job);
     let detail = match &result {
+        Ok(report) if report.cancelled => {
+            format!("Abgebrochen · {} heruntergeladen", report.restored)
+        }
         Ok(report) => format!(
             "{} heruntergeladen · {} vorhandene behalten · {} Fehler",
             report.restored,
@@ -224,10 +343,12 @@ pub fn restore(
     };
     job.finish(
         detail,
-        Outcome::Restore(
-            target,
-            result.as_ref().is_ok_and(|report| report.errors.is_empty()),
-        ),
+        match &result {
+            Ok(report) if !report.errors.is_empty() => Some(Outcome::Restore(target, false)),
+            Ok(report) if report.cancelled => None,
+            Ok(_) => Some(Outcome::Restore(target, true)),
+            Err(_) => Some(Outcome::Restore(target, false)),
+        },
     );
     result
 }

@@ -1,4 +1,4 @@
-use crate::BackupFile;
+use crate::{BackupFile, TransferControl};
 use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -220,12 +220,23 @@ impl Backend for WebdavBackend {
     }
 
     fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
+        self.put_controlled(rel, file, size, &TransferControl::default())
+    }
+
+    fn put_controlled(
+        &self,
+        rel: &Path,
+        file: File,
+        size: u64,
+        control: &TransferControl,
+    ) -> io::Result<u64> {
+        control.check_cancelled()?;
         let mut random = [0u8; 16];
         getrandom::fill(&mut random).map_err(|error| io::Error::other(error.to_string()))?;
         let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let temporary = rel.with_file_name(format!(".cloudsave-upload-{token}.part"));
         let url = self.url_for(&temporary);
-        let body = reqwest::blocking::Body::sized(file, size);
+        let body = reqwest::blocking::Body::sized(control.reader(file, true), size);
         let resp = self
             .request(reqwest::Method::PUT, &url)
             .header(reqwest::header::IF_NONE_MATCH, "*")
@@ -240,12 +251,15 @@ impl Backend for WebdavBackend {
             )));
         }
         let method = reqwest::Method::from_bytes(b"MOVE").map_err(io::Error::other)?;
-        let result = self
-            .request(method, &url)
-            .header("Destination", self.url_for(rel))
-            .header("Overwrite", "T")
-            .send()
-            .map_err(|error| io::Error::other(error.to_string()))
+        let result = control
+            .check_cancelled()
+            .and_then(|()| {
+                self.request(method, &url)
+                    .header("Destination", self.url_for(rel))
+                    .header("Overwrite", "T")
+                    .send()
+                    .map_err(io::Error::other)
+            })
             .and_then(|response| {
                 if response.status().is_success() {
                     Ok(size)

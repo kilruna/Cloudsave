@@ -1,4 +1,6 @@
-use crate::{Backend, BackupFile, Config, Error, Progress, RestoreReport, Result, Target};
+use crate::{
+    Backend, BackupFile, Config, Error, Progress, RestoreReport, Result, Target, TransferControl,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -196,6 +198,22 @@ pub fn restore_mapped(
     target: &Target,
     files: &[BackupFile],
     locations: &[RestoreLocation],
+    progress: impl FnMut(Progress),
+) -> Result<RestoreReport> {
+    restore_mapped_controlled(
+        target,
+        files,
+        locations,
+        &TransferControl::default(),
+        progress,
+    )
+}
+
+pub fn restore_mapped_controlled(
+    target: &Target,
+    files: &[BackupFile],
+    locations: &[RestoreLocation],
+    control: &TransferControl,
     mut progress: impl FnMut(Progress),
 ) -> Result<RestoreReport> {
     let mut mappings = BTreeMap::new();
@@ -256,7 +274,7 @@ pub fn restore_mapped(
         entries.push((file.clone(), root.clone(), relative));
     }
     let backend = crate::restore::existing_backend(target)?;
-    crate::restore::restore_entries(&*backend, &entries, true, &mut progress)
+    crate::restore::restore_entries(&*backend, &entries, true, control, &mut progress)
 }
 
 /// Create only a chosen relative folder below a user-approved root, refusing

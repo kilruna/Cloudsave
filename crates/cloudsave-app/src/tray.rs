@@ -2,6 +2,7 @@
 //! GIO dispatches all callbacks on GTK's main context; no second UI/sync thread.
 use crate::jobs::{self, TrayStatus};
 use adw::prelude::*;
+use cloudsave_core::{TransferControl, TransferStatus};
 use gtk::{gio, glib};
 use gtk4 as gtk;
 use libadwaita as adw;
@@ -218,8 +219,8 @@ fn item_property(name: &str, pixmaps: &Pixmaps, snapshot: &jobs::Snapshot) -> gl
         "OverlayIconName" | "AttentionIconName" | "AttentionMovieName" => "".to_variant(),
         "ToolTip" => {
             let mut text = snapshot.status.label().to_owned();
-            if let Some(entry) = snapshot.active.first() {
-                text.push_str(&format!("\n{}", compact(entry)));
+            if let Some(active) = &snapshot.active {
+                text = format!("Datei-Auftrag läuft\n{}", compact(&active.entry));
                 if snapshot.has_error {
                     text.push_str("\nVorheriger Auftrag mit Fehlern");
                 }
@@ -251,18 +252,25 @@ impl MenuState {
             (1, "Cloudsave öffnen".into(), true),
             (10, "Aktive Jobs".into(), false),
         ];
-        if self.snapshot.active.is_empty() {
+        if let Some(active) = &self.snapshot.active {
+            let id = job_row(active.entry.id);
+            rows.push((id, compact(&active.entry), false));
+            let enabled = active.control_status != TransferStatus::Cancelling;
+            rows.push((
+                id + 1,
+                jobs::pause_label(active.control_status).into(),
+                enabled,
+            ));
+            rows.push((id + 2, "Auftrag abbrechen".into(), enabled));
+        } else {
             rows.push((11, "Keine aktiven Jobs".into(), false));
-        }
-        for entry in &self.snapshot.active {
-            rows.push((100 + entry.id as i32, compact(entry), false));
         }
         rows.push((12, "Letzte Jobs dieser Sitzung".into(), false));
         if self.snapshot.recent.is_empty() {
             rows.push((13, "Noch keine Jobs ausgeführt".into(), false));
         }
         for entry in &self.snapshot.recent {
-            rows.push((100 + entry.id as i32, compact(entry), false));
+            rows.push((job_row(entry.id), compact(entry), false));
         }
         rows.push((2, "Beenden".into(), true));
         rows
@@ -294,6 +302,10 @@ impl MenuState {
         (id, self.properties(id, names), children)
     }
 }
+
+fn job_row(id: u64) -> i32 {
+    100 + (id % 500_000_000) as i32 * 3
+}
 fn compact(entry: &jobs::Entry) -> String {
     let text = format!("{} · {}", entry.label, entry.detail).replace(['\n', '\r', '\t'], " ");
     if text.chars().count() > 100 {
@@ -303,13 +315,22 @@ fn compact(entry: &jobs::Entry) -> String {
     }
 }
 
-fn event(app: &glib::WeakRef<adw::Application>, id: i32, event: &str) {
+fn event(app: &glib::WeakRef<adw::Application>, state: &MenuState, id: i32, event: &str) {
     if event == "clicked" {
         if let Some(app) = app.upgrade() {
             match id {
                 1 => app.activate(),
                 2 => app.quit(),
-                _ => {}
+                _ => {
+                    if let Some(active) = &state.snapshot.active {
+                        let row = job_row(active.entry.id);
+                        if id == row + 1 {
+                            jobs::operate(active.entry.id, TransferControl::toggle_pause);
+                        } else if id == row + 2 {
+                            jobs::operate(active.entry.id, TransferControl::cancel);
+                        }
+                    }
+                }
             }
         }
     }
@@ -364,7 +385,7 @@ fn menu_call(
         "Event" => {
             // Reply before an explicit quit tears down the connection.
             invocation.return_value(None);
-            event(app, p.child_get(0), &p.child_get::<String>(1));
+            event(app, state, p.child_get(0), &p.child_get::<String>(1));
             return;
         }
         "EventGroup" => {
@@ -376,7 +397,7 @@ fn menu_call(
                 .collect();
             invocation.return_value(Some(&(errors,).to_variant()));
             for (id, name, _, _) in events {
-                event(app, id, &name);
+                event(app, state, id, &name);
             }
             return;
         }

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::Target;
 use crate::webdav::WebdavBackend;
-use crate::BackupFile;
+use crate::{BackupFile, TransferControl};
 
 pub trait Backend {
     fn list(&self) -> io::Result<Vec<BackupFile>>;
@@ -12,6 +12,16 @@ pub trait Backend {
     fn test_connection(&self) -> io::Result<()>;
     fn mkdirs(&self, rel: &Path) -> io::Result<()>;
     fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64>;
+    fn put_controlled(
+        &self,
+        rel: &Path,
+        file: File,
+        size: u64,
+        control: &TransferControl,
+    ) -> io::Result<u64> {
+        control.check_cancelled()?;
+        self.put(rel, file, size)
+    }
     fn delete(&self, rel: &Path) -> io::Result<()>;
 }
 
@@ -79,7 +89,18 @@ impl Backend for LocalBackend {
         Ok(())
     }
 
-    fn put(&self, rel: &Path, mut file: File, size: u64) -> io::Result<u64> {
+    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
+        self.put_controlled(rel, file, size, &TransferControl::default())
+    }
+
+    fn put_controlled(
+        &self,
+        rel: &Path,
+        file: File,
+        size: u64,
+        control: &TransferControl,
+    ) -> io::Result<u64> {
+        control.check_cancelled()?;
         let p = self.root.join(rel);
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
@@ -91,7 +112,7 @@ impl Backend for LocalBackend {
             .prefix(".cloudsave-upload-")
             .suffix(".part")
             .tempfile_in(parent)?;
-        let written = io::copy(&mut file, &mut out)?;
+        let written = io::copy(&mut control.reader(file, true), &mut out)?;
         if written != size {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -99,6 +120,7 @@ impl Backend for LocalBackend {
             ));
         }
         out.as_file().sync_all()?;
+        control.check_cancelled()?;
         out.persist(&p).map_err(|error| error.error)?;
         #[cfg(unix)]
         File::open(parent)?.sync_all()?;

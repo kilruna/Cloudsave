@@ -11,6 +11,7 @@ Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 - [x] Ganze Ordner im Einrichtungsassistenten wiederherstellen: Endpunktprüfung vor dem ersten Upload, bisherige Home-Orte oder separater Ausgabeordner, fortsetzbar nach Neustart. Neue Sicherungen speichern eine portable Ordnerzuordnung; alte erhalten bestätigbare Vorschläge. Fehler/Konflikte lassen Auto-Sync pausiert.
 - [x] Orange Wolke im Tray mit aktiven Aufträgen, Upload-/Downloadphase und den letzten acht Jobs der laufenden Sitzung. Öffnen und Beenden bleiben im Menü erreichbar.
 - [x] Tray-Symbol mit sichtbaren Zuständen für bereit, laufende Aufträge, pausierte Automatik, Fehler und erfolgreichen Sync. Fensterkopf, Tray und Flatpak-Launcher verwenden dieselbe Wolke.
+- [x] Fortschritt für Übertragungen mit übertragenen Bytes pro Datei, Geschwindigkeit und geschätzter Restzeit bei bekannter Dateigröße. Aufträge können im Tray pausiert, fortgesetzt und abgebrochen werden. Die Pause greift nach der laufenden Datei.
 
 Für den Schlüsselbund muss ein Secret-Service-Anbieter in der Desktopsitzung laufen
 und gegebenenfalls entsperrt werden. Cloudsave schreibt keine neuen Passwortdateien.
@@ -35,7 +36,7 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
 ## Weiter offen
 
 - SFTP/rsync und S3 als zusätzliche Backends.
-- Übertragungsfortschritt in Dateien/Bytes, Abbrechen und Netzwerk-Retries.
+- Automatische Wiederholungen bei vorübergehenden Netzwerkfehlern.
 - Job-Historie über App-Neustarts hinweg.
 - Bandbreitenlimit, Akku-/Netzwerkregeln und Desktop-Benachrichtigungen.
 - Policies pro Quellordner, Verschlüsselung, Übersetzungen und Flathub-Release.
@@ -54,8 +55,9 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
    Endpunkt verdeckt keinen Fehler eines anderen Endpunkts im selben Sync-Lauf.
    Die Anzeige nach frischer Installation und Update auf Bazzite gehört zur
    Desktop-Abnahme.
-3. **Übertragungen kontrollieren:** echter Datei-/Byte-Fortschritt mit
-   Geschwindigkeit und Restzeitschätzung, anschließend Pausieren und Abbrechen.
+3. **Übertragungen kontrollieren:** Fortschritt, Pausieren, Fortsetzen und
+   Abbrechen sind umgesetzt. Bereits abgeschlossene Dateien bleiben bei einem
+   Abbruch erhalten.
 4. **Netzwerkfehler behandeln:** automatische Wiederholungen mit Wartezeiten und
    verständlicher Anzeige bei nicht erreichbaren Endpunkten.
 5. **Alltagskomfort und Veröffentlichung:** dauerhafte Job-Historie,
