@@ -376,7 +376,10 @@ pub fn page(
                 let locations: Vec<_> = chosen.iter().map(|(namespace, (base, relative))| {
                     Ok(RestoreLocation { namespace: namespace.clone(), destination: cloudsave_core::prepare_restore_location(&target, base, relative)? })
                 }).collect::<cloudsave_core::Result<_>>()?;
-                let report = crate::jobs::restore(&target, |job| cloudsave_core::restore_mapped(&target, &files, &locations, |progress| job.progress(progress)))?;
+                let report = crate::jobs::restore(&target, cloudsave_core::TransferControl::default(), |job| {
+                    cloudsave_core::restore_mapped_controlled(&target, &files, &locations, job.control(), |progress| job.progress(progress))
+                })?;
+                if report.cancelled { return Err(cloudsave_core::Error(format!("Auftrag abgebrochen · {} Dateien wiederhergestellt", report.restored))); }
                 if !report.errors.is_empty() { return Err(cloudsave_core::Error(format!("{} Dateien geladen, {} vorhandene behalten. {} Fehler:\n{}", report.restored, report.skipped, report.errors.len(), report.errors.join("\n")))); }
                 let mut config = config;
                 if originals {

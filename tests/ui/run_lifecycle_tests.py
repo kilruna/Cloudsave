@@ -132,6 +132,14 @@ def main():
         eventually(lambda: item_property('ToolTip')[3].startswith(label))
         return bytes(item_property('IconPixmap')[0][2])
 
+    def menu_rows():
+        return call(connection, MENU, DBUSMENU, 'GetLayout', '(iias)', (0, -1, []))[1][2]
+
+    def menu_click(label):
+        row = next(row for row in menu_rows() if row[1]['label'] == label)
+        assert row[1]['enabled']
+        call(connection, MENU, DBUSMENU, 'Event', '(isvu)', (row[0], 'clicked', GLib.Variant('i', 0), 0))
+
     def passed(name):
         checks.append(name)
         print('PASS', name, flush=True)
@@ -189,9 +197,14 @@ def main():
                     eventually(lambda: any('Synchronisierung' in label and 'Ordner werden geprüft' in label for label in menu_labels()), 10)
                     assert 'Keine aktiven Jobs' not in menu_labels()
                     busy_icon = wait_status('Datei-Auftrag läuft')
+                    menu_click('Pausieren')
+                    eventually(lambda: any('Pause nach der aktuellen Datei' in label for label in menu_labels()))
                     passed('Tray shows an actual active sync while the real state database is busy')
                 finally:
                     database.rollback(); database.close()
+                eventually(lambda: any('Auftrag pausiert' in label for label in menu_labels()))
+                assert (target/'Dokumente/hello.txt').read_text() == 'first'
+                menu_click('Fortsetzen')
                 eventually(lambda: (target/'Dokumente/hello.txt').exists() and
                            (target/'Dokumente/hello.txt').read_text() == 'updated while hidden', 12)
                 eventually(lambda: any('hochgeladen' in label for label in menu_labels()))
@@ -275,11 +288,22 @@ def main():
         def download_labels():
             return [child[1]['label'] for child in call(connection,MENU,DBUSMENU,'GetLayout','(iias)',(0,-1,[]))[1][2]]
         eventually(lambda:any('Download: Archive/saved.txt' in label for label in download_labels()))
-        with saved.open('wb') as writer: writer.write(b'saved')
+        with saved.open('wb', buffering=0) as writer:
+            writer.write(b'sa')
+            eventually(lambda: any('2 B / 5 B' in label for label in download_labels()))
+            menu_click('Auftrag abbrechen')
+            eventually(lambda: any('Abbruch angefordert' in label for label in download_labels()))
+            writer.write(b'ved')
+        eventually(lambda: any('Abgebrochen' in label for label in download_labels()))
+        assert not (destination/'Archive/saved.txt').exists()
+        assert not list(destination.rglob('.cloudsave-restore-*'))
+        saved.unlink()
+        saved.write_bytes(b'saved')
+        app.click('Wiederherstellen')
         eventually(lambda:(destination/'Archive/saved.txt').exists())
         eventually(lambda:any('1 heruntergeladen' in label for label in download_labels()))
         assert (destination/'Archive/saved.txt').read_bytes() == b'saved'
-        passed('Tray shows a real blocked download, then its successful byte-checked restore result')
+        passed('Tray shows byte progress, cancels without publishing a partial restore, and reports a successful retry')
     finally:
         app.stop()
 

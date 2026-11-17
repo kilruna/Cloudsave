@@ -15,15 +15,16 @@ mod webdav;
 pub use autostart::{autostart_enabled, set_autostart};
 pub use backend::{backend_for, Backend, LocalBackend};
 pub use config::{Config, Settings, SyncMode, Target};
-pub use engine::{sync, sync_with_progress, target_label, SyncReport};
+pub use engine::{sync, sync_controlled, sync_with_progress, target_label, SyncReport};
 pub use exclusions::validate_exclusion_patterns;
-pub use progress::Progress;
+pub use progress::{Progress, TransferControl, TransferProgress, TransferStatus};
 pub use recovery::{
-    discover_backup, prepare_restore_location, restore_mapped, BackupFolder, BackupInventory,
-    RestoreLocation,
+    discover_backup, prepare_restore_location, restore_mapped, restore_mapped_controlled,
+    BackupFolder, BackupInventory, RestoreLocation,
 };
 pub use restore::{
-    adopt_restored, list_backups, restore_files, restore_with_progress, BackupFile, RestoreReport,
+    adopt_restored, list_backups, restore_controlled, restore_files, restore_with_progress,
+    BackupFile, RestoreReport,
 };
 pub use secrets::{load_password, save_password};
 pub use state::State;

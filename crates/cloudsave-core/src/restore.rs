@@ -1,4 +1,4 @@
-use crate::{backend_for, Error, Result, Target};
+use crate::{backend_for, Error, Result, Target, TransferControl};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -13,6 +13,7 @@ pub struct RestoreReport {
     pub restored: usize,
     pub bytes: u64,
     pub skipped: usize,
+    pub cancelled: bool,
     pub errors: Vec<String>,
     pub(crate) copies: Vec<RestoredCopy>,
 }
@@ -25,14 +26,17 @@ pub(crate) struct RestoredCopy {
     hash: String,
 }
 
-struct DigestWriter<'a> {
+struct DigestWriter<'a, 'b> {
     file: &'a mut fs::File,
     hash: blake3::Hasher,
+    transfer: &'a crate::progress::FileTransfer<'b>,
 }
-impl Write for DigestWriter<'_> {
+impl Write for DigestWriter<'_, '_> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.transfer.check_cancelled()?;
         let written = self.file.write(bytes)?;
         self.hash.update(&bytes[..written]);
+        self.transfer.wrote(written);
         Ok(written)
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -168,6 +172,22 @@ pub fn restore_with_progress(
     target: &Target,
     files: &[BackupFile],
     destination: &Path,
+    progress: impl FnMut(crate::Progress),
+) -> Result<RestoreReport> {
+    restore_controlled(
+        target,
+        files,
+        destination,
+        &TransferControl::default(),
+        progress,
+    )
+}
+
+pub fn restore_controlled(
+    target: &Target,
+    files: &[BackupFile],
+    destination: &Path,
+    control: &TransferControl,
     mut progress: impl FnMut(crate::Progress),
 ) -> Result<RestoreReport> {
     // Validate every remote-controlled name before creating any destination directory.
@@ -182,17 +202,22 @@ pub fn restore_with_progress(
         .iter()
         .map(|file| (file.clone(), destination.to_path_buf(), file.path.clone()))
         .collect();
-    restore_entries(&*backend, &entries, false, &mut progress)
+    restore_entries(&*backend, &entries, false, control, &mut progress)
 }
 
 pub(crate) fn restore_entries(
     backend: &dyn crate::Backend,
     entries: &[(BackupFile, PathBuf, PathBuf)],
     keep_existing: bool,
+    control: &TransferControl,
     progress: &mut impl FnMut(crate::Progress),
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
     for (index, (file, destination, relative)) in entries.iter().enumerate() {
+        if control.checkpoint().is_err() {
+            report.cancelled = true;
+            return Ok(report);
+        }
         progress(crate::Progress::Checking {
             completed: index,
             total: entries.len(),
@@ -211,16 +236,19 @@ pub(crate) fn restore_entries(
             progress(crate::Progress::Downloading {
                 path: file.path.clone(),
             });
+            control.check_cancelled()?;
             let parent = output
                 .parent()
                 .ok_or_else(|| std::io::Error::other("Kein Zielordner"))?;
             let mut temporary = tempfile::Builder::new()
                 .prefix(".cloudsave-restore-")
                 .tempfile_in(parent)?;
+            let transfer = control.begin_file(&file.path, file.size);
             let (written, hash) = {
                 let mut writer = DigestWriter {
                     file: temporary.as_file_mut(),
                     hash: blake3::Hasher::new(),
+                    transfer: &transfer,
                 };
                 let written = backend.download(&file.path, &mut writer)?;
                 (written, writer.hash.finalize().to_hex().to_string())
@@ -237,6 +265,7 @@ pub(crate) fn restore_entries(
                 return Err(std::io::Error::other("Unvollständiger Download"));
             }
             let mtime = crate::engine::mtime_stamp(&metadata);
+            control.check_cancelled()?;
             temporary
                 .persist_noclobber(&output)
                 .map_err(|error| error.error)?;
@@ -256,6 +285,10 @@ pub(crate) fn restore_entries(
                 report.copies.push(copy);
             }
             Ok(None) => report.skipped += 1,
+            Err(_) if control.is_cancelled() => {
+                report.cancelled = true;
+                return Ok(report);
+            }
             Err(error) => report
                 .errors
                 .push(format!("{}: {error}", file.path.display())),

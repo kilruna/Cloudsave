@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use crate::backend::{backend_for, Backend};
 use crate::config::{Config, Target};
 use crate::state::State;
-use crate::Result;
+use crate::{Result, TransferControl};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SyncReport {
@@ -14,6 +14,7 @@ pub struct SyncReport {
     pub deleted: usize,
     pub skipped: usize,
     pub bytes: u64,
+    pub cancelled: bool,
     pub errors: Vec<String>,
 }
 
@@ -44,9 +45,35 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
 pub fn sync_with_progress(
     config: &Config,
     state_path: &Path,
-    mut progress: impl FnMut(crate::Progress),
+    progress: impl FnMut(crate::Progress),
+) -> Result<SyncReport> {
+    sync_controlled(config, state_path, &TransferControl::default(), progress)
+}
+
+pub fn sync_controlled(
+    config: &Config,
+    state_path: &Path,
+    control: &TransferControl,
+    progress: impl FnMut(crate::Progress),
 ) -> Result<SyncReport> {
     let mut report = SyncReport::default();
+    let result = sync_run(config, state_path, control, progress, &mut report);
+    if control.is_cancelled() {
+        report.cancelled = true;
+    } else {
+        result?;
+    }
+    Ok(report)
+}
+
+fn sync_run(
+    config: &Config,
+    state_path: &Path,
+    control: &TransferControl,
+    mut progress: impl FnMut(crate::Progress),
+    report: &mut SyncReport,
+) -> Result<()> {
+    control.checkpoint()?;
     if config.settings.pending_recovery.is_some() {
         return Err(crate::Error("Zuerst die Wiederherstellung abschließen oder bewusst überspringen. Synchronisierung bleibt pausiert.".into()));
     }
@@ -55,12 +82,14 @@ pub fn sync_with_progress(
         report
             .errors
             .push("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.".into());
-        return Ok(report);
+        return Ok(());
     }
     for target in &config.targets {
+        control.checkpoint()?;
         if let Target::Local { path } = target {
             let destination = crate::paths::resolved(path)?;
             for folder in &config.folders {
+                control.checkpoint()?;
                 let source = crate::paths::resolved(folder)?;
                 if destination.starts_with(&source) || source.starts_with(&destination) {
                     report.errors.push(format!("Quelle {} und Ziel {} überlappen sich. Bitte einen getrennten Sicherungsordner wählen.", folder.display(), path.display()));
@@ -69,7 +98,7 @@ pub fn sync_with_progress(
         }
     }
     if !report.errors.is_empty() {
-        return Ok(report);
+        return Ok(());
     }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
     let mut state = State::open(state_path)?;
@@ -79,10 +108,12 @@ pub fn sync_with_progress(
     let mut complete_sources = HashSet::new();
     let mut namespaces = HashMap::new();
     for folder in &config.folders {
+        control.checkpoint()?;
         let name = crate::recovery::namespace(config, folder)?;
         *namespaces.entry(name).or_insert(0) += 1;
     }
     for folder in &config.folders {
+        control.checkpoint()?;
         let name = crate::recovery::namespace(config, folder)?;
         if namespaces[&name] > 1 {
             report.errors.push(format!("Quelle {}: mehrere Quellordner haben denselben Zielnamen. Sicherungen bleiben erhalten.", folder.display()));
@@ -105,6 +136,7 @@ pub fn sync_with_progress(
                         .matches(entry.path().strip_prefix(folder).unwrap_or(entry.path()))
             })
         {
+            control.checkpoint()?;
             let entry = match entry {
                 Ok(e) => e,
                 Err(e) => {
@@ -143,6 +175,7 @@ pub fn sync_with_progress(
     }
 
     for target in &config.targets {
+        control.checkpoint()?;
         let backend = match backend_for(target) {
             Ok(b) => b,
             Err(e) => {
@@ -155,6 +188,7 @@ pub fn sync_with_progress(
         let prefix = target_prefix(target)?;
         let mut deletable_sources = complete_sources.clone();
         for (checked, (key, (abs, size, mtime))) in scanned.iter().enumerate() {
+            control.checkpoint()?;
             progress(crate::Progress::Checking {
                 completed: checked,
                 total: scanned.len(),
@@ -173,7 +207,7 @@ pub fn sync_with_progress(
             }
             let unchanged = match state.get(&skey)? {
                 Some(entry) if entry.size == *size && entry.mtime == *mtime && *mtime != 0 => true,
-                Some(entry) if entry.size == *size => match file_hash(abs) {
+                Some(entry) if entry.size == *size => match file_hash(abs, control) {
                     Ok(hash) if hash == entry.hash => {
                         // Touches and legacy second-based stamps do not require re-uploading identical data.
                         state.upsert(&skey, *size, *mtime, &hash)?;
@@ -181,6 +215,7 @@ pub fn sync_with_progress(
                     }
                     Ok(_) => false,
                     Err(error) => {
+                        control.check_cancelled()?;
                         deletable_sources.remove(source);
                         report.errors.push(format!(
                             "{} · Quelle {}: {error}",
@@ -205,13 +240,15 @@ pub fn sync_with_progress(
             match upload_one(
                 &*backend,
                 &mut state,
-                &mut report,
+                report,
                 &skey,
                 Path::new(key),
                 &(abs.clone(), *size, *mtime),
+                control,
             ) {
                 Ok(()) => state.set_source(&skey, source)?,
                 Err(e) => {
+                    control.check_cancelled()?;
                     deletable_sources.remove(source);
                     report.errors.push(format!(
                         "{} · Quelle {} · Datei {}: {}",
@@ -228,6 +265,7 @@ pub fn sync_with_progress(
             completed: scanned.len(),
             total: scanned.len(),
         });
+        control.checkpoint()?;
         if report.errors.is_empty() && !config.folders.is_empty() {
             if let Err(error) = crate::recovery::save_catalog(&*backend, config) {
                 report.errors.push(format!(
@@ -241,6 +279,7 @@ pub fn sync_with_progress(
         }
         let p = format!("{}::", prefix);
         for key in state.all_paths()? {
+            control.checkpoint()?;
             if let Some(rel) = key.strip_prefix(&p) {
                 let relative: PathBuf = Path::new(rel).components().skip(1).collect();
                 if exclusions.matches(&relative) {
@@ -271,7 +310,7 @@ pub fn sync_with_progress(
         }
     }
 
-    Ok(report)
+    Ok(())
 }
 
 fn upload_one(
@@ -281,21 +320,24 @@ fn upload_one(
     state_key: &str,
     rel: &Path,
     file: &(PathBuf, i64, i64),
+    control: &TransferControl,
 ) -> Result<()> {
     let (abs, size, mtime) = (file.0.clone(), file.1, file.2);
     backend.mkdirs(rel)?;
-    let hash = file_hash(&abs)?;
+    let hash = file_hash(&abs, control)?;
     let f = fs::File::open(&abs)?;
-    let written = backend.put(rel, f, size as u64)?;
+    control.checkpoint()?;
+    let _transfer = control.begin_file(rel, Some(size as u64));
+    let written = backend.put_controlled(rel, f, size as u64, control)?;
     state.upsert(state_key, size, mtime, &hash)?;
     report.uploaded += 1;
     report.bytes += written;
     Ok(())
 }
 
-fn file_hash(path: &Path) -> std::io::Result<String> {
+fn file_hash(path: &Path, control: &TransferControl) -> std::io::Result<String> {
     let mut hasher = blake3::Hasher::new();
-    let mut file = fs::File::open(path)?;
-    std::io::copy(&mut file, &mut hasher)?;
+    let file = fs::File::open(path)?;
+    std::io::copy(&mut control.reader(file, false), &mut hasher)?;
     Ok(hasher.finalize().to_hex().to_string())
 }
