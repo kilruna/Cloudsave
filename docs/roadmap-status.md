@@ -12,6 +12,7 @@ Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 - [x] Orange Wolke im Tray mit aktiven Aufträgen, Upload-/Downloadphase und den letzten acht Jobs der laufenden Sitzung. Öffnen und Beenden bleiben im Menü erreichbar.
 - [x] Tray-Symbol mit sichtbaren Zuständen für bereit, laufende Aufträge, pausierte Automatik, Fehler und erfolgreichen Sync. Fensterkopf, Tray und Flatpak-Launcher verwenden dieselbe Wolke.
 - [x] Fortschritt für Übertragungen mit übertragenen Bytes pro Datei, Geschwindigkeit und geschätzter Restzeit bei bekannter Dateigröße. Aufträge können im Tray pausiert, fortgesetzt und abgebrochen werden. Die Pause greift nach der laufenden Datei.
+- [x] WebDAV wiederholt vorübergehend fehlgeschlagene Dateioperationen nach zwei und fünf Sekunden. Das Tray zeigt die Wartezeit. Wenn alle Versuche an einem Ziel scheitern, gehen andere Endpunkte weiter.
 
 Für den Schlüsselbund muss ein Secret-Service-Anbieter in der Desktopsitzung laufen
 und gegebenenfalls entsperrt werden. Cloudsave schreibt keine neuen Passwortdateien.
@@ -36,7 +37,6 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
 ## Weiter offen
 
 - SFTP/rsync und S3 als zusätzliche Backends.
-- Automatische Wiederholungen bei vorübergehenden Netzwerkfehlern.
 - Job-Historie über App-Neustarts hinweg.
 - Bandbreitenlimit, Akku-/Netzwerkregeln und Desktop-Benachrichtigungen.
 - Policies pro Quellordner, Verschlüsselung, Übersetzungen und Flathub-Release.
@@ -58,8 +58,9 @@ Zielpfad beschränkt. Temporäre Upload-Dateien werden nicht als Backups angebot
 3. **Übertragungen kontrollieren:** Fortschritt, Pausieren, Fortsetzen und
    Abbrechen sind umgesetzt. Bereits abgeschlossene Dateien bleiben bei einem
    Abbruch erhalten.
-4. **Netzwerkfehler behandeln:** automatische Wiederholungen mit Wartezeiten und
-   verständlicher Anzeige bei nicht erreichbaren Endpunkten.
+4. **Netzwerkfehler behandeln:** umgesetzt. WebDAV-Transfers beginnen beim
+   Wiederholen mit einer neuen temporären Datei. Anmelde- und lokale
+   Schreibfehler werden direkt gemeldet.
 5. **Alltagskomfort und Veröffentlichung:** dauerhafte Job-Historie,
    Fehlerbenachrichtigungen und Flathub. Zusätzliche Protokolle folgen danach.
 

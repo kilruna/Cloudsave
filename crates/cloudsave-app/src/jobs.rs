@@ -117,12 +117,24 @@ impl ActiveJob {
     fn snapshot(&self) -> ActiveEntry {
         let control_status = self.control.status();
         let measurement = self.control.progress();
+        let retry = self.control.retry_progress();
         let mut entry = self.entry.clone();
         entry.detail = match control_status {
-            TransferStatus::Running => match &measurement {
-                Some(file) => format!("{} · {}", transfer_detail(file), entry.detail),
-                None => entry.detail,
-            },
+            TransferStatus::Running => {
+                if let Some(retry) = retry {
+                    format!(
+                        "WebDAV vorübergehend nicht verfügbar · Versuch {}/{} in {} s · {}",
+                        retry.attempt,
+                        retry.attempts,
+                        retry.remaining.as_secs_f64().ceil() as u64,
+                        entry.detail
+                    )
+                } else if let Some(file) = &measurement {
+                    format!("{} · {}", transfer_detail(file), entry.detail)
+                } else {
+                    entry.detail
+                }
+            }
             TransferStatus::PauseRequested => {
                 format!("Pause nach der aktuellen Datei · {}", entry.detail)
             }
