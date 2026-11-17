@@ -236,6 +236,15 @@ fn main() -> glib::ExitCode {
     let startup_tray = tray.clone();
     app.connect_startup(move |app| {
         gtk::Window::set_default_icon_name("org.cloudsave.Cloudsave");
+        jobs::load_history();
+        let open = gtk::gio::SimpleAction::new("open", None);
+        let window_app = app.downgrade();
+        open.connect_activate(move |_, _| {
+            if let Some(app) = window_app.upgrade() {
+                app.activate();
+            }
+        });
+        app.add_action(&open);
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         if let Some(display) = gtk::gdk::Display::default() {

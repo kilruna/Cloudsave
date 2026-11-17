@@ -265,7 +265,7 @@ impl MenuState {
         } else {
             rows.push((11, "Keine aktiven Jobs".into(), false));
         }
-        rows.push((12, "Letzte Jobs dieser Sitzung".into(), false));
+        rows.push((12, "Letzte Jobs".into(), false));
         if self.snapshot.recent.is_empty() {
             rows.push((13, "Noch keine Jobs ausgeführt".into(), false));
         }
