@@ -976,8 +976,9 @@ impl FolderList {
         text.append(&location);
         row.append(&text);
 
-        let remove = gtk::Button::from_icon_name("list-remove-symbolic");
-        remove.add_css_class("flat");
+        let remove = gtk::Button::new();
+        remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
+        remove.add_css_class("folder-remove");
         remove.set_valign(gtk::Align::Center);
         let remove_label = format!("{name} entfernen");
         remove.set_tooltip_text(Some(&remove_label));
