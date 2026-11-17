@@ -222,7 +222,7 @@ pub(crate) fn restore_entries(
             completed: index,
             total: entries.len(),
         });
-        let result = (|| -> std::io::Result<Option<RestoredCopy>> {
+        let result = crate::retry::run(control, || -> std::io::Result<Option<RestoredCopy>> {
             let output = safe_path(destination, relative, true)?;
             if output.try_exists()? {
                 if keep_existing && output.is_file() {
@@ -277,7 +277,7 @@ pub(crate) fn restore_entries(
                 mtime,
                 hash,
             }))
-        })();
+        });
         match result {
             Ok(Some(copy)) => {
                 report.restored += 1;
@@ -289,9 +289,14 @@ pub(crate) fn restore_entries(
                 report.cancelled = true;
                 return Ok(report);
             }
-            Err(error) => report
-                .errors
-                .push(format!("{}: {error}", file.path.display())),
+            Err(error) => {
+                report
+                    .errors
+                    .push(format!("{}: {error}", file.path.display()));
+                if crate::retry::is_temporary(&error) {
+                    return Ok(report);
+                }
+            }
         }
     }
     progress(crate::Progress::Checking {

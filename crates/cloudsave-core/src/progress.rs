@@ -35,6 +35,13 @@ pub struct TransferProgress {
     pub elapsed: Duration,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryProgress {
+    pub attempt: u8,
+    pub attempts: u8,
+    pub remaining: Duration,
+}
+
 #[derive(Clone, Default)]
 pub struct TransferControl(Arc<Control>);
 
@@ -49,6 +56,7 @@ struct Control {
 struct TransferState {
     status: TransferStatus,
     file: Option<Measurement>,
+    retry: Option<(u8, Instant)>,
 }
 
 struct Measurement {
@@ -71,6 +79,15 @@ impl TransferControl {
             bytes: file.bytes.load(Ordering::Relaxed),
             total: file.total,
             elapsed: file.started.elapsed(),
+        })
+    }
+
+    pub fn retry_progress(&self) -> Option<RetryProgress> {
+        let (attempt, until) = self.0.state.lock().unwrap().retry?;
+        Some(RetryProgress {
+            attempt,
+            attempts: crate::retry::ATTEMPTS,
+            remaining: until.saturating_duration_since(Instant::now()),
         })
     }
 
@@ -113,6 +130,29 @@ impl TransferControl {
             state.status = TransferStatus::Paused;
             state = self.0.changed.wait(state).unwrap();
         }
+        self.check_cancelled()
+    }
+
+    pub(crate) fn wait_to_retry(&self, attempt: u8, delay: Duration) -> io::Result<()> {
+        let until = Instant::now() + delay;
+        let mut state = self.0.state.lock().unwrap();
+        state.retry = Some((attempt, until));
+        while state.status != TransferStatus::Cancelling {
+            if matches!(
+                state.status,
+                TransferStatus::PauseRequested | TransferStatus::Paused
+            ) {
+                state.status = TransferStatus::Paused;
+                state = self.0.changed.wait(state).unwrap();
+            } else {
+                let remaining = until.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break;
+                }
+                state = self.0.changed.wait_timeout(state, remaining).unwrap().0;
+            }
+        }
+        state.retry = None;
         self.check_cancelled()
     }
 

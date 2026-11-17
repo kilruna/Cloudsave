@@ -73,13 +73,16 @@ impl Write for Limited {
         Ok(())
     }
 }
-fn read_catalog(backend: &dyn Backend) -> Result<Option<Catalog>> {
-    let mut data = Limited(Vec::new());
-    match backend.download(Path::new(CATALOG), &mut data) {
+fn read_catalog(backend: &dyn Backend, control: &TransferControl) -> Result<Option<Catalog>> {
+    let data = match crate::retry::run(control, || {
+        let mut data = Limited(Vec::new());
+        backend.download(Path::new(CATALOG), &mut data)?;
+        Ok(data)
+    }) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
-        Ok(_) => {}
-    }
+        Ok(data) => data,
+    };
     let text = std::str::from_utf8(&data.0).map_err(|error| Error(error.to_string()))?;
     let catalog: Catalog = toml::from_str(text)?;
     if catalog.version != 1 || catalog.folders.len() > 4096 {
@@ -100,8 +103,12 @@ fn read_catalog(backend: &dyn Backend) -> Result<Option<Catalog>> {
     Ok(Some(catalog))
 }
 
-pub(crate) fn save_catalog(backend: &dyn Backend, config: &Config) -> Result<()> {
-    let old = read_catalog(backend)?;
+pub(crate) fn save_catalog(
+    backend: &dyn Backend,
+    config: &Config,
+    control: &TransferControl,
+) -> Result<()> {
+    let old = read_catalog(backend, control)?;
     let mut folders: BTreeMap<_, _> = old
         .as_ref()
         .map(|c| c.folders.clone())
@@ -148,19 +155,21 @@ pub(crate) fn save_catalog(backend: &dyn Backend, config: &Config) -> Result<()>
     {
         return Ok(());
     }
-    let mut file = tempfile::tempfile()?;
-    file.write_all(text.as_bytes())?;
-    use std::io::{Seek, SeekFrom};
-    file.seek(SeekFrom::Start(0))?;
-    backend.mkdirs(Path::new(CATALOG))?;
-    backend.put(Path::new(CATALOG), file, text.len() as u64)?;
+    crate::retry::run(control, || backend.mkdirs(Path::new(CATALOG)))?;
+    crate::retry::run(control, || {
+        let mut file = tempfile::tempfile()?;
+        file.write_all(text.as_bytes())?;
+        use std::io::Seek;
+        file.rewind()?;
+        backend.put_controlled(Path::new(CATALOG), file, text.len() as u64, control)
+    })?;
     Ok(())
 }
 
 pub fn discover_backup(target: &Target) -> Result<BackupInventory> {
     let files = crate::list_backups(target)?;
     let backend = crate::restore::existing_backend(target)?;
-    let catalog = read_catalog(&*backend)?;
+    let catalog = read_catalog(&*backend, &TransferControl::default())?;
     let mut folders: BTreeMap<String, BackupFolder> = catalog
         .as_ref()
         .map(|c| c.folders.clone())

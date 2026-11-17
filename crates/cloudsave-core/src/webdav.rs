@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::backend::Backend;
+use crate::retry;
 use crate::{Error, Result};
 
 pub struct WebdavBackend {
@@ -14,6 +15,41 @@ pub struct WebdavBackend {
     base: String,
     user: String,
     password: String,
+}
+
+fn request_error(error: reqwest::Error) -> io::Error {
+    let mut source = std::error::Error::source(&error);
+    while let Some(cause) = source {
+        if cause
+            .downcast_ref::<io::Error>()
+            .is_some_and(|e| e.kind() == io::ErrorKind::InvalidData)
+        {
+            // TLS validation and malformed protocol data require a fix, not another request.
+            return io::Error::other(error);
+        }
+        source = cause.source();
+    }
+    if error.is_timeout() || error.is_connect() || error.is_request() || error.is_body() {
+        retry::temporary(error)
+    } else {
+        io::Error::other(error)
+    }
+}
+
+fn status_error(status: reqwest::StatusCode, message: String) -> io::Error {
+    if matches!(status.as_u16(), 408 | 500 | 502 | 503 | 504) {
+        retry::temporary(message)
+    } else {
+        io::Error::other(message)
+    }
+}
+
+struct ResponseBody(reqwest::blocking::Response);
+
+impl Read for ResponseBody {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.0.read(buffer).map_err(retry::temporary)
+    }
 }
 
 /// Syntax validation for the HTTPS endpoint offered by the setup UI; no network access.
@@ -137,6 +173,7 @@ impl Backend for WebdavBackend {
         let mut queue = VecDeque::from([root.clone()]);
         let mut visited = HashSet::new();
         let mut files = Vec::new();
+        let control = TransferControl::default();
         while let Some(directory) = queue.pop_front() {
             if !visited.insert(directory.to_string()) {
                 continue;
@@ -145,19 +182,23 @@ impl Backend for WebdavBackend {
                 return Err(io::Error::other("Zu viele Sicherungseinträge; bitte einen kleineren WebDAV-Unterordner als Ziel wählen"));
             }
             let method = reqwest::Method::from_bytes(b"PROPFIND").map_err(io::Error::other)?;
-            let response=self.request(method,directory.as_str()).header("Depth","1").header("Content-Type","application/xml")
-                .body(r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#)
-                .send().map_err(io::Error::other)?;
-            if response.status().as_u16() != 207 {
-                return Err(io::Error::other(format!(
-                    "Sicherungen lesen: HTTP {}",
-                    response.status()
-                )));
-            }
-            let mut xml = String::new();
-            response
-                .take(16 * 1024 * 1024 + 1)
-                .read_to_string(&mut xml)?;
+            let xml = retry::run(&control, || {
+                let response = self.request(method.clone(), directory.as_str()).header("Depth", "1").header("Content-Type", "application/xml")
+                    .body(r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#)
+                    .send().map_err(request_error)?;
+                let status = response.status();
+                if status.as_u16() != 207 {
+                    return Err(status_error(
+                        status,
+                        format!("Sicherungen lesen: HTTP {status}"),
+                    ));
+                }
+                let mut xml = String::new();
+                ResponseBody(response)
+                    .take(16 * 1024 * 1024 + 1)
+                    .read_to_string(&mut xml)?;
+                Ok(xml)
+            })?;
             if xml.len() > 16 * 1024 * 1024 {
                 return Err(io::Error::other("WebDAV-Verzeichnisantwort zu groß"));
             }
@@ -169,10 +210,10 @@ impl Backend for WebdavBackend {
     }
     fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64> {
         crate::restore::validate_relative(rel)?;
-        let mut response = self
+        let response = self
             .request(reqwest::Method::GET, &self.url_for(rel))
             .send()
-            .map_err(io::Error::other)?;
+            .map_err(request_error)?;
         if !response.status().is_success() {
             if response.status().as_u16() == 404 {
                 return Err(io::Error::new(
@@ -180,12 +221,13 @@ impl Backend for WebdavBackend {
                     "Sicherungsdatei nicht gefunden (HTTP 404)",
                 ));
             }
-            return Err(io::Error::other(format!(
-                "Sicherung herunterladen: HTTP {}",
-                response.status()
-            )));
+            let status = response.status();
+            return Err(status_error(
+                status,
+                format!("Sicherung herunterladen: HTTP {status}"),
+            ));
         }
-        io::copy(&mut response, writer)
+        io::copy(&mut ResponseBody(response), writer)
     }
 
     fn test_connection(&self) -> io::Result<()> {
@@ -207,13 +249,13 @@ impl Backend for WebdavBackend {
             let url = format!("{}{}", self.base, acc);
             let method = reqwest::Method::from_bytes(b"MKCOL")
                 .map_err(|e| io::Error::other(e.to_string()))?;
-            let resp = self
-                .request(method, &url)
-                .send()
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            let resp = self.request(method, &url).send().map_err(request_error)?;
             let st = resp.status().as_u16();
             if !(200..300).contains(&st) && st != 405 && st != 301 {
-                return Err(io::Error::other(format!("MKCOL {} -> HTTP {}", url, st)));
+                return Err(status_error(
+                    resp.status(),
+                    format!("MKCOL {url} -> HTTP {st}"),
+                ));
             }
         }
         Ok(())
@@ -242,13 +284,14 @@ impl Backend for WebdavBackend {
             .header(reqwest::header::IF_NONE_MATCH, "*")
             .body(body)
             .send()
-            .map_err(|e| io::Error::other(e.to_string()))?;
+            .map_err(request_error)?;
         let st = resp.status();
         if !st.is_success() {
             // In particular, 412 means the path belongs to somebody else: never delete it.
-            return Err(io::Error::other(format!(
-                "Temporärer PUT -> HTTP {st}; bestehende Sicherung unverändert"
-            )));
+            return Err(status_error(
+                st,
+                format!("Temporärer PUT -> HTTP {st}; bestehende Sicherung unverändert"),
+            ));
         }
         let method = reqwest::Method::from_bytes(b"MOVE").map_err(io::Error::other)?;
         let result = control
@@ -258,16 +301,19 @@ impl Backend for WebdavBackend {
                     .header("Destination", self.url_for(rel))
                     .header("Overwrite", "T")
                     .send()
-                    .map_err(io::Error::other)
+                    .map_err(request_error)
             })
             .and_then(|response| {
                 if response.status().is_success() {
                     Ok(size)
                 } else {
-                    Err(io::Error::other(format!(
-                        "MOVE -> HTTP {}; bestehende Sicherung nicht ersetzt",
-                        response.status()
-                    )))
+                    Err(status_error(
+                        response.status(),
+                        format!(
+                            "MOVE -> HTTP {}; bestehende Sicherung nicht ersetzt",
+                            response.status()
+                        ),
+                    ))
                 }
             });
         if result.is_err() {
@@ -282,12 +328,15 @@ impl Backend for WebdavBackend {
         let resp = self
             .request(reqwest::Method::DELETE, &url)
             .send()
-            .map_err(|e| io::Error::other(e.to_string()))?;
+            .map_err(request_error)?;
         let st = resp.status().as_u16();
         if (200..300).contains(&st) || st == 404 {
             Ok(())
         } else {
-            Err(io::Error::other(format!("DELETE {} -> HTTP {}", url, st)))
+            Err(status_error(
+                resp.status(),
+                format!("DELETE {url} -> HTTP {st}"),
+            ))
         }
     }
 }

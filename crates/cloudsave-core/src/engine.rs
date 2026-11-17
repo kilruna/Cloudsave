@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use crate::backend::{backend_for, Backend};
 use crate::config::{Config, Target};
 use crate::state::State;
-use crate::{Result, TransferControl};
+use crate::{retry, Result, TransferControl};
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct SyncReport {
@@ -101,7 +101,7 @@ fn sync_run(
         return Ok(());
     }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
-    let mut state = State::open(state_path)?;
+    let state = State::open(state_path)?;
 
     let mut scanned: HashMap<String, (PathBuf, i64, i64)> = HashMap::new();
     let mut sources = HashMap::new();
@@ -174,7 +174,7 @@ fn sync_run(
         }
     }
 
-    for target in &config.targets {
+    'targets: for target in &config.targets {
         control.checkpoint()?;
         let backend = match backend_for(target) {
             Ok(b) => b,
@@ -239,14 +239,16 @@ fn sync_run(
             });
             match upload_one(
                 &*backend,
-                &mut state,
-                report,
-                &skey,
                 Path::new(key),
                 &(abs.clone(), *size, *mtime),
                 control,
             ) {
-                Ok(()) => state.set_source(&skey, source)?,
+                Ok((written, hash)) => {
+                    state.upsert(&skey, *size, *mtime, &hash)?;
+                    state.set_source(&skey, source)?;
+                    report.uploaded += 1;
+                    report.bytes += written;
+                }
                 Err(e) => {
                     control.check_cancelled()?;
                     deletable_sources.remove(source);
@@ -257,6 +259,9 @@ fn sync_run(
                         abs.display(),
                         e
                     ));
+                    if retry::is_temporary(&e) {
+                        continue 'targets;
+                    }
                 }
             }
         }
@@ -267,7 +272,8 @@ fn sync_run(
         });
         control.checkpoint()?;
         if report.errors.is_empty() && !config.folders.is_empty() {
-            if let Err(error) = crate::recovery::save_catalog(&*backend, config) {
+            if let Err(error) = crate::recovery::save_catalog(&*backend, config, control) {
+                control.check_cancelled()?;
                 report.errors.push(format!(
                     "{} · Ordnerzuordnung speichern: {error}",
                     target_label(target)
@@ -293,17 +299,20 @@ fn sync_run(
                         path: PathBuf::from(rel),
                         target: target_label(target),
                     });
-                    match backend.delete(Path::new(rel)) {
+                    match retry::run(control, || backend.delete(Path::new(rel))) {
                         Ok(()) => {
                             state.remove(&key)?;
                             report.deleted += 1;
                         }
-                        Err(e) => report.errors.push(format!(
-                            "{} · löschen {}: {}",
-                            target_label(target),
-                            rel,
-                            e
-                        )),
+                        Err(e) => {
+                            control.check_cancelled()?;
+                            report
+                                .errors
+                                .push(format!("{} · löschen {rel}: {e}", target_label(target)));
+                            if retry::is_temporary(&e) {
+                                continue 'targets;
+                            }
+                        }
                     }
                 }
             }
@@ -315,24 +324,25 @@ fn sync_run(
 
 fn upload_one(
     backend: &dyn Backend,
-    state: &mut State,
-    report: &mut SyncReport,
-    state_key: &str,
     rel: &Path,
     file: &(PathBuf, i64, i64),
     control: &TransferControl,
-) -> Result<()> {
-    let (abs, size, mtime) = (file.0.clone(), file.1, file.2);
-    backend.mkdirs(rel)?;
-    let hash = file_hash(&abs, control)?;
-    let f = fs::File::open(&abs)?;
-    control.checkpoint()?;
-    let _transfer = control.begin_file(rel, Some(size as u64));
-    let written = backend.put_controlled(rel, f, size as u64, control)?;
-    state.upsert(state_key, size, mtime, &hash)?;
-    report.uploaded += 1;
-    report.bytes += written;
-    Ok(())
+) -> std::io::Result<(u64, String)> {
+    let (abs, size, mtime) = file;
+    retry::run(control, || backend.mkdirs(rel))?;
+    let hash = file_hash(abs, control)?;
+    let written = retry::run(control, || {
+        let file = fs::File::open(abs)?;
+        let metadata = file.metadata()?;
+        if metadata.len() != *size as u64 || (*mtime != 0 && mtime_stamp(&metadata) != *mtime) {
+            return Err(std::io::Error::other(
+                "Quelldatei wurde während der Sicherung geändert",
+            ));
+        }
+        let _transfer = control.begin_file(rel, Some(*size as u64));
+        backend.put_controlled(rel, file, *size as u64, control)
+    })?;
+    Ok((written, hash))
 }
 
 fn file_hash(path: &Path, control: &TransferControl) -> std::io::Result<String> {

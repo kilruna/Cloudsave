@@ -2,6 +2,10 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::thread;
 
 use cloudsave_core::{backend_for, sync, Config, Settings, SyncMode, Target};
@@ -13,10 +17,20 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn handle_conn(stream: TcpStream, srv_root: &Path) {
-    handle_conn_mode(stream, srv_root, None);
+    handle_conn_mode(stream, srv_root, |_, _| None);
 }
 
-fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) {
+#[derive(PartialEq, Eq)]
+enum Fault {
+    HttpError,
+    TruncatedBody,
+}
+
+fn handle_conn_mode(
+    mut stream: TcpStream,
+    srv_root: &Path,
+    fail: impl FnOnce(&str, &str) -> Option<Fault>,
+) {
     let mut buf = Vec::new();
     let mut tmp = [0u8; 8192];
     let header_end = loop {
@@ -70,7 +84,8 @@ fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) 
         .unwrap();
     let fs_path = srv_root.join(rel.as_ref());
 
-    let (status, reason, extra) = if fail == Some(method.as_str()) {
+    let fault = fail(&method, rel.as_ref());
+    let (status, reason, extra) = if fault == Some(Fault::HttpError) {
         (500, "Injected failure", None)
     } else {
         match method.as_str() {
@@ -148,7 +163,12 @@ fn handle_conn_mode(mut stream: TcpStream, srv_root: &Path, fail: Option<&str>) 
         extra.unwrap_or_default()
     );
     let _ = stream.write_all(resp.as_bytes());
-    let _ = stream.write_all(&body_out);
+    let body = if fault == Some(Fault::TruncatedBody) {
+        &body_out[..body_out.len() / 2]
+    } else {
+        &body_out
+    };
+    let _ = stream.write_all(body);
     let _ = stream.flush();
 }
 
@@ -270,7 +290,9 @@ fn failed_temporary_put_or_move_preserves_previous_webdav_backup() {
         let server_root = srv.clone();
         thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                handle_conn_mode(stream, &server_root, Some(failed_method));
+                handle_conn_mode(stream, &server_root, |method, _| {
+                    (method == failed_method).then_some(Fault::HttpError)
+                });
             }
         });
         let source = tmp.path().join("source");
@@ -391,4 +413,81 @@ fn webdav_backups_can_be_browsed_and_restored_with_unicode_paths() {
         fs::read(output.join(&files[0].path)).unwrap(),
         b"edited after recovery"
     );
+}
+
+#[test]
+fn transient_upload_failure_and_truncated_download_retry_the_whole_file() {
+    use cloudsave_core::{restore_files, BackupFile};
+
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    let remote = temp.path().join("remote");
+    let restored = temp.path().join("restored");
+    let payload = b"new complete file";
+    fs::create_dir_all(remote.join("dav/source")).unwrap();
+    fs::create_dir(&source).unwrap();
+    fs::create_dir(&restored).unwrap();
+    fs::write(source.join("game.dat"), payload).unwrap();
+    fs::write(remote.join("dav/source/game.dat"), b"previous backup").unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/dav", listener.local_addr().unwrap());
+    let uploads = Arc::new(AtomicUsize::new(0));
+    let downloads = Arc::new(AtomicUsize::new(0));
+    let server_uploads = uploads.clone();
+    let server_downloads = downloads.clone();
+    let server_root = remote.clone();
+    thread::spawn(move || {
+        for connection in listener.incoming().flatten() {
+            handle_conn_mode(connection, &server_root, |method, path| {
+                if method == "PUT"
+                    && path.starts_with("dav/source/")
+                    && server_uploads.fetch_add(1, Ordering::Relaxed) == 0
+                {
+                    assert_eq!(
+                        fs::read(server_root.join("dav/source/game.dat")).unwrap(),
+                        b"previous backup"
+                    );
+                    return Some(Fault::HttpError);
+                }
+                if method == "GET"
+                    && path == "dav/source/game.dat"
+                    && server_downloads.fetch_add(1, Ordering::Relaxed) == 0
+                {
+                    return Some(Fault::TruncatedBody);
+                }
+                None
+            });
+        }
+    });
+    let target = Target::Webdav {
+        url,
+        user: "qa-user".into(),
+    };
+    let config = Config {
+        folders: vec![source],
+        targets: vec![target.clone()],
+        settings: Settings::default(),
+    };
+
+    let report = sync(&config, &temp.path().join("state.db")).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.uploaded, 1);
+    assert_eq!(uploads.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        fs::read(remote.join("dav/source/game.dat")).unwrap(),
+        payload
+    );
+
+    let files = [BackupFile {
+        path: "source/game.dat".into(),
+        size: Some(payload.len() as u64),
+    }];
+    let report = restore_files(&target, &files, &restored).unwrap();
+    assert!(report.errors.is_empty(), "{:?}", report.errors);
+    assert_eq!(report.restored, 1);
+    assert_eq!(downloads.load(Ordering::Relaxed), 2);
+    assert_eq!(fs::read(restored.join("source/game.dat")).unwrap(), payload);
+    assert_eq!(fs::read_dir(restored.join("source")).unwrap().count(), 1);
 }
