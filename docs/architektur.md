@@ -19,6 +19,29 @@ und WebDAV-Zielen. DAV-Listen werden rekursiv mit Depth 1 innerhalb desselben
 Origins/Zielpfads eingelesen. Downloads verwenden Tempdateien und
 `persist_noclobber`; relative Pfade und Symlink-Eltern werden geprüft.
 
+Neue Syncs speichern unter `.cloudsave/folders.toml` eine versionierte portable
+Ordnerzuordnung: stabiler Servername und optionaler Pfad relativ zum Home.
+Passwörter und absolute Home-Pfade gehören nicht in diesen Katalog. Der reservierte
+Metadatenpfad zählt nicht als gesicherte Benutzerdatei. Vorhandene Zuordnungen
+abgewählter Quellen bleiben erhalten; die Datei wird nur bei Änderungen ersetzt.
+Kataloge werden vor Verwendung auf Version, Größe, doppelte Namen und unsichere
+Pfade geprüft. Alte Sicherungen ohne Katalog bleiben wiederherstellbar.
+
+Der Einrichtungsassistent prüft vorhandene Daten, bevor er Sync freigibt.
+`pending_recovery` pausiert auch die Engine und lässt die App nach einem Neustart
+in die Wiederherstellung zurückkehren. Eine explizite Zuordnung verbindet ganze
+Serverordner mit bestätigten lokalen Zielen. Ein erfolgreicher Download erfasst
+Hash und Dateizeit bereits beim Schreiben. Nach Wiederherstellung an die bisherigen
+Orte übernimmt `adopt_restored` diese Einträge in den lokalen Sync-Status; dadurch
+werden unveränderte Downloads nicht unmittelbar wieder hochgeladen.
+
+`Progress` meldet Scan, geprüfte Dateien, Upload, Download und Spiegelungs-Löschungen
+aus den tatsächlichen Dateioperationen. Die GTK-App hält daraus eine begrenzte
+Job-Historie im Arbeitsspeicher und aktualisiert DBusMenu/Tray-Tooltip bei Änderungen.
+Sync und Restore teilen sich eine Sperre, sodass keine zwei Datei-Aufträge der
+App gleichzeitig laufen. Es gibt keine geschätzte Byte-Queue und keine zweite
+Sync-Engine für den Tray.
+
 Die Flatpak erhält `home:ro` für die tatsächliche Home-Ordnerliste und Leserechte
 für ausgewählte Quellen; zusätzliche Schreibziele kommen über den Datei-Dialog.
 Ein separater D-Bus-Daemon, rsync/SFTP/S3 und genauer Transferfortschritt sind geplant.

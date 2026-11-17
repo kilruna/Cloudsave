@@ -17,7 +17,7 @@ pub struct SyncReport {
     pub errors: Vec<String>,
 }
 
-fn mtime_stamp(meta: &fs::Metadata) -> i64 {
+pub(crate) fn mtime_stamp(meta: &fs::Metadata) -> i64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -25,7 +25,7 @@ fn mtime_stamp(meta: &fs::Metadata) -> i64 {
         .unwrap_or(0)
 }
 
-fn target_prefix(target: &Target) -> Result<String> {
+pub(crate) fn target_prefix(target: &Target) -> Result<String> {
     let s = toml::to_string(target).map_err(|e| crate::Error(e.to_string()))?;
     Ok(blake3::hash(s.as_bytes()).to_hex()[..16].to_string())
 }
@@ -38,7 +38,19 @@ pub fn target_label(target: &Target) -> String {
 }
 
 pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
+    sync_with_progress(config, state_path, |_| {})
+}
+
+pub fn sync_with_progress(
+    config: &Config,
+    state_path: &Path,
+    mut progress: impl FnMut(crate::Progress),
+) -> Result<SyncReport> {
     let mut report = SyncReport::default();
+    if config.settings.pending_recovery.is_some() {
+        return Err(crate::Error("Zuerst die Wiederherstellung abschließen oder bewusst überspringen. Synchronisierung bleibt pausiert.".into()));
+    }
+    progress(crate::Progress::Scanning);
     if config.targets.is_empty() {
         report
             .errors
@@ -67,15 +79,11 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
     let mut complete_sources = HashSet::new();
     let mut namespaces = HashMap::new();
     for folder in &config.folders {
-        let name = folder
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("root"));
+        let name = crate::recovery::namespace(config, folder)?;
         *namespaces.entry(name).or_insert(0) += 1;
     }
     for folder in &config.folders {
-        let name = folder
-            .file_name()
-            .unwrap_or_else(|| std::ffi::OsStr::new("root"));
+        let name = crate::recovery::namespace(config, folder)?;
         if namespaces[&name] > 1 {
             report.errors.push(format!("Quelle {}: mehrere Quellordner haben denselben Zielnamen. Sicherungen bleiben erhalten.", folder.display()));
             continue;
@@ -86,10 +94,7 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
                 .push(format!("Ordner nicht gefunden: {}", folder.display()));
             continue;
         }
-        let prefix = folder
-            .file_name()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("root"));
+        let prefix = PathBuf::from(name);
         let mut complete = true;
         for entry in walkdir::WalkDir::new(folder)
             .follow_links(false)
@@ -149,7 +154,11 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
         };
         let prefix = target_prefix(target)?;
         let mut deletable_sources = complete_sources.clone();
-        for (key, (abs, size, mtime)) in &scanned {
+        for (checked, (key, (abs, size, mtime))) in scanned.iter().enumerate() {
+            progress(crate::Progress::Checking {
+                completed: checked,
+                total: scanned.len(),
+            });
             let skey = format!("{}::{}", prefix, key);
             let source = &sources[key];
             if state.source(&skey)?.is_some_and(|owner| owner != *source) {
@@ -189,6 +198,10 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
                 report.skipped += 1;
                 continue;
             }
+            progress(crate::Progress::Uploading {
+                path: PathBuf::from(key),
+                target: target_label(target),
+            });
             match upload_one(
                 &*backend,
                 &mut state,
@@ -211,6 +224,18 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
             }
         }
 
+        progress(crate::Progress::Checking {
+            completed: scanned.len(),
+            total: scanned.len(),
+        });
+        if report.errors.is_empty() && !config.folders.is_empty() {
+            if let Err(error) = crate::recovery::save_catalog(&*backend, config) {
+                report.errors.push(format!(
+                    "{} · Ordnerzuordnung speichern: {error}",
+                    target_label(target)
+                ));
+            }
+        }
         if config.settings.sync_mode == crate::SyncMode::Backup {
             continue;
         }
@@ -225,6 +250,10 @@ pub fn sync(config: &Config, state_path: &Path) -> Result<SyncReport> {
                     .source(&key)?
                     .is_some_and(|source| deletable_sources.contains(&source));
                 if source_complete && !scanned.contains_key(rel) {
+                    progress(crate::Progress::Deleting {
+                        path: PathBuf::from(rel),
+                        target: target_label(target),
+                    });
                     match backend.delete(Path::new(rel)) {
                         Ok(()) => {
                             state.remove(&key)?;

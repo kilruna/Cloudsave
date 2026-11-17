@@ -26,7 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
-      options: --privileged
+      # Keep OSTree objects/deployments on one writable filesystem; updating
+      # runtimes in the image's overlay can fail with "Invalid cross-device link".
+      options: --privileged --volume /var/lib/flatpak
     steps:
       - uses: actions/checkout@v7
       - name: Vendored Cargo-Sources aktuell

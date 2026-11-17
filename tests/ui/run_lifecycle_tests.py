@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import pathlib
+import sqlite3
 import subprocess
 import sys
 import time
@@ -141,31 +142,59 @@ def main():
         assert watcher.registrations[0][1] == ITEM
         props = call(connection, ITEM, 'org.freedesktop.DBus.Properties', 'GetAll', '(s)', (SNI,))[0]
         assert props['Status'] == 'Active' and props['Id'] == APP and props['Menu'] == MENU
-        passed('Tray registered and Active while window is visible')
+        assert props['ItemIsMenu'] is True and props['IconName'] == ''
+        for width, height, pixels in props['IconPixmap']:
+            assert width == height and width in (24, 32, 48, 64) and len(pixels) == width*height*4
+            assert any(pixels[i] > 200 and pixels[i+1] > 200 and 60 < pixels[i+2] < 200 and pixels[i+3] < 100 for i in range(0,len(pixels),4)), 'Missing orange ARGB pixels'
+            assert any(all(channel > 220 for channel in pixels[i:i+4]) for i in range(0,len(pixels),4)), 'Missing white cloud'
+        assert len(props['IconPixmap']) == 4
+        passed('Tray supplies the embedded orange cloud in four sizes and requests a menu on normal click')
 
         revision, layout = call(connection, MENU, DBUSMENU, 'GetLayout', '(iias)', (0, -1, []))
-        assert revision == 1 and [child[1]['label'] for child in layout[2]] == ['Cloudsave öffnen', 'Beenden']
+        assert revision >= 1
+        labels = [child[1]['label'] for child in layout[2]]
+        assert all(label in labels for label in ['Cloudsave öffnen','Beenden','Aktive Jobs','Letzte Jobs dieser Sitzung'])
         group = call(connection, MENU, DBUSMENU, 'GetGroupProperties', '(aias)', ([1, 2], ['label']))[0]
         assert len(group) == 2 and all(list(properties) == ['label'] for _, properties in group)
         assert call(connection, MENU, DBUSMENU, 'GetProperty', '(is)', (1, 'label'))[0] == 'Cloudsave öffnen'
         assert call(connection, MENU, DBUSMENU, 'AboutToShow', '(i)', (0,)) == (False,)
-        passed('Panel menu exposes opening and quitting through DBusMenu')
+        requested = []
+        subscription = connection.signal_subscribe(APP, DBUSMENU, 'ItemActivationRequested', MENU, None,
+            Gio.DBusSignalFlags.NONE, lambda *args: requested.append(args[-1].unpack()))
+        call(connection, ITEM, SNI, 'Activate', '(ii)', (0,0))
+        eventually(lambda: bool(requested))
+        assert requested[-1] == (0,0)
+        connection.signal_unsubscribe(subscription)
+        passed('Panel menu exposes job sections, explicit Open/Quit and requests the root menu on activation')
 
         for cycle in range(5):
             app.close_window()
             status = call(connection, ITEM, 'org.freedesktop.DBus.Properties', 'Get', '(ss)', (SNI, 'Status'))[0]
             assert status == 'Active'
             if cycle == 0:
+                eventually(lambda: (target/'Dokumente/hello.txt').exists())
+                database = sqlite3.connect(app.root/'state/cloudsave/state.db')
+                database.execute('BEGIN EXCLUSIVE')
                 (source/'hello.txt').write_text('updated while hidden')
+                def menu_labels():
+                    return [child[1]['label'] for child in call(connection, MENU, DBUSMENU, 'GetLayout', '(iias)', (0,-1,[]))[1][2]]
+                try:
+                    eventually(lambda: any('Synchronisierung' in label and 'Ordner werden geprüft' in label for label in menu_labels()), 10)
+                    assert 'Keine aktiven Jobs' not in menu_labels()
+                    passed('Tray shows an actual active sync while the real state database is busy')
+                finally:
+                    database.rollback(); database.close()
                 eventually(lambda: (target/'Dokumente/hello.txt').exists() and
                            (target/'Dokumente/hello.txt').read_text() == 'updated while hidden', 12)
-                passed('Real automatic sync continues with the window hidden')
+                eventually(lambda: any('hochgeladen' in label for label in menu_labels()))
+                passed('Real automatic sync continues hidden and its result enters tray history')
             if cycle == 1:
                 call(connection, MENU, DBUSMENU, 'Event', '(isvu)', (1, 'clicked', GLib.Variant('i', 0), 0))
             elif cycle == 2:
                 app.secondary()
             else:
-                call(connection, ITEM, SNI, 'Activate' if cycle != 3 else 'SecondaryActivate', '(ii)', (0, 0))
+                if cycle == 3: call(connection, ITEM, SNI, 'SecondaryActivate', '(ii)', (0,0))
+                else: call(connection, MENU, DBUSMENU, 'Event', '(isvu)', (1,'clicked',GLib.Variant('i',0),0))
             app.assert_window(True)
             app.secondary(background=True)
             app.assert_window(True)
@@ -201,7 +230,7 @@ def main():
         app.secondary()
         app.assert_window(True)
         app.close_window()
-        call(connection, ITEM, SNI, 'Activate', '(ii)', (0, 0))
+        call(connection, MENU, DBUSMENU, 'Event', '(isvu)', (1,'clicked',GLib.Variant('i',0),0))
         app.assert_window(True)
         passed('Late panel startup and launcher activation work after background startup')
         app.click('Einstellungen')
@@ -217,6 +246,31 @@ def main():
         app.launch()
         app.expect_exit_on_close()
         passed('Disabling background mode makes the first close exit')
+    finally:
+        app.stop()
+    app = SessionUI('tray-download', folders=[], auto_sync=False)
+    backup = app.root/'Backup'; (backup/'Archive').mkdir(parents=True)
+    saved = backup/'Archive/saved.txt'; saved.write_text('saved')
+    destination = app.root/'restored'; destination.mkdir()
+    app.write_config([], [backup])
+    try:
+        app.launch(); app.click('Sicherungen wiederherstellen'); app.click('Sicherungen laden')
+        eventually(lambda: any('1 Sicherungsdatei(en)' in label for label in app.labels()))
+        app.set_active('GtkCheckButton', True)
+        app.click('Wiederherstellungsordner wählen …')
+        ui.run('xdotool','key','ctrl+l'); time.sleep(.2)
+        entry=app.find('GtkFileChooserEntry'); app.command('text',entry['id'],str(destination)); ui.run('xdotool','key','Return')
+        if not ui.eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in app.tree()),3): app.click('_Select')
+        saved.unlink(); os.mkfifo(saved)
+        app.click('Wiederherstellen')
+        def download_labels():
+            return [child[1]['label'] for child in call(connection,MENU,DBUSMENU,'GetLayout','(iias)',(0,-1,[]))[1][2]]
+        eventually(lambda:any('Download: Archive/saved.txt' in label for label in download_labels()))
+        with saved.open('wb') as writer: writer.write(b'saved')
+        eventually(lambda:(destination/'Archive/saved.txt').exists())
+        eventually(lambda:any('1 heruntergeladen' in label for label in download_labels()))
+        assert (destination/'Archive/saved.txt').read_bytes() == b'saved'
+        passed('Tray shows a real blocked download, then its successful byte-checked restore result')
     finally:
         app.stop()
     return 0

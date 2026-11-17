@@ -21,6 +21,224 @@ struct SyncUi {
     sub: gtk::Label,
     progress: gtk::ProgressBar,
     btn: gtk::Button,
+    banner: gtk::Box,
+    symbol: gtk::DrawingArea,
+    files: gtk::Label,
+    size: gtk::Label,
+    last_sync: gtk::Label,
+}
+
+fn separator() -> gtk::Separator {
+    let line = gtk::Separator::new(gtk::Orientation::Horizontal);
+    line.add_css_class("row-sep");
+    line
+}
+
+fn stat_card(symbol: Icon, caption: &str) -> (gtk::Box, gtk::Label) {
+    let card = gtk::Box::new(gtk::Orientation::Horizontal, 17);
+    card.add_css_class("card");
+    card.add_css_class("stat-card");
+    let glyph = icon(symbol, 34, 0.96, 0.74, 0.51);
+    glyph.add_css_class("stat-icon");
+    card.append(&glyph);
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    text.set_hexpand(true);
+    let value = gtk::Label::new(Some("—"));
+    value.add_css_class("stat-value");
+    value.set_xalign(0.0);
+    value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    let name = gtk::Label::new(Some(caption));
+    name.add_css_class("stat-caption");
+    name.set_xalign(0.0);
+    name.set_wrap(true);
+    text.append(&value);
+    text.append(&name);
+    card.append(&text);
+    (card, value)
+}
+
+fn update_stats(ui: &SyncUi, state_path: &Path) {
+    let values = State::open(state_path)
+        .and_then(|state| Ok((state.count()?, state.total_size()?, state.last_synced()?)));
+    match values {
+        Ok((count, size, last)) => {
+            ui.files.set_text(&count.to_string());
+            let mut bytes = size.max(0) as f64;
+            let mut unit = "B";
+            for next in ["KiB", "MiB", "GiB", "TiB"] {
+                if bytes < 1024.0 {
+                    break;
+                }
+                bytes /= 1024.0;
+                unit = next;
+            }
+            ui.size.set_text(&if unit == "B" {
+                format!("{size} B")
+            } else {
+                format!("{bytes:.1} {unit}").replace('.', ",")
+            });
+            ui.last_sync.set_text(&if last.is_some() {
+                fmt_rel(last)
+            } else {
+                "Noch nie".into()
+            });
+        }
+        Err(_) => {
+            ui.files.set_text("—");
+            ui.size.set_text("—");
+            ui.last_sync.set_text("—");
+        }
+    }
+}
+
+fn set_status(ui: &SyncUi, status: &str) {
+    for class in ["success", "busy", "error"] {
+        ui.banner.remove_css_class(class);
+    }
+    ui.banner.add_css_class(status);
+    let (glyph, color) = match status {
+        "success" => (Icon::Check, (0.64, 0.87, 0.54)),
+        "error" => (Icon::Warning, (1.0, 0.68, 0.60)),
+        _ => (Icon::Refresh, (1.0, 0.72, 0.43)),
+    };
+    crate::set_icon(&ui.symbol, glyph, color.0, color.1, color.2);
+    ui.progress.set_visible(status == "busy");
+}
+
+fn endpoint_card(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    target: &Target,
+    index: usize,
+    count: usize,
+) -> gtk::Box {
+    let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    card.add_css_class("card");
+    card.add_css_class("panel");
+    card.add_css_class("endpoint-card");
+    let heading = gtk::Label::new(Some(&if count == 1 {
+        "Ziel".into()
+    } else {
+        format!("Ziel {}", index + 1)
+    }));
+    heading.add_css_class("section-title");
+    heading.set_xalign(0.0);
+    heading.set_margin_bottom(16);
+    card.append(&heading);
+    card.append(&separator());
+
+    let (name, description) = match target {
+        Target::Local { path } => ("Lokaler Ordner", path.to_string_lossy().to_string()),
+        Target::Webdav { url, user } => (
+            if glib::Uri::parse(url, glib::UriFlags::NONE)
+                .ok()
+                .and_then(|uri| uri.host())
+                .is_some_and(|host| host.ends_with(".your-storagebox.de"))
+            {
+                "Hetzner Storage Box"
+            } else {
+                "WebDAV"
+            },
+            format!("{} · Benutzer {}", url, user),
+        ),
+    };
+    let details = gtk::Box::new(gtk::Orientation::Horizontal, 15);
+    details.add_css_class("target-details");
+    details.append(&icon(
+        if matches!(target, Target::Local { .. }) {
+            Icon::Storage
+        } else {
+            Icon::Server
+        },
+        36,
+        0.96,
+        0.74,
+        0.51,
+    ));
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    text.set_hexpand(true);
+    let title = gtk::Label::new(Some(name));
+    title.add_css_class("target-title");
+    title.set_xalign(0.0);
+    title.set_wrap(true);
+    text.append(&title);
+    let subtitle = gtk::Label::new(Some(&description));
+    subtitle.add_css_class("target-sub");
+    subtitle.set_xalign(0.0);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_width_chars(20);
+    subtitle.set_max_width_chars(30);
+    subtitle.set_tooltip_text(Some(&description));
+    text.append(&subtitle);
+    details.append(&text);
+    card.append(&details);
+
+    let test = gtk::Button::with_label("Verbindung testen");
+    test.add_css_class("secondary-btn");
+    test.set_halign(gtk::Align::Start);
+    card.append(&test);
+    let status = gtk::Label::new(None);
+    status.set_wrap(true);
+    status.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    status.set_selectable(true);
+    status.set_xalign(0.0);
+    status.set_margin_top(10);
+    status.set_visible(false);
+    card.append(&status);
+    {
+        let target = target.clone();
+        test.connect_clicked(move |button| {
+            button.set_sensitive(false);
+            status.set_visible(true);
+            status.remove_css_class("error");
+            status.set_text("Verbindung wird geprüft …");
+            let target = target.clone();
+            let label = cloudsave_core::target_label(&target);
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let result = cloudsave_core::backend_for(&target)
+                    .and_then(|backend| backend.test_connection().map_err(Into::into));
+                let _ = tx.send(result);
+            });
+            let status = status.clone();
+            let button = button.clone();
+            glib::timeout_add_local(Duration::from_millis(150), move || {
+                let result = match rx.try_recv() {
+                    Ok(result) => result,
+                    Err(mpsc::TryRecvError::Empty) => return glib::ControlFlow::Continue,
+                    Err(mpsc::TryRecvError::Disconnected) => Err(cloudsave_core::Error(
+                        "Verbindungsprüfung abgebrochen. Bitte erneut versuchen.".into(),
+                    )),
+                };
+                button.set_sensitive(true);
+                match result {
+                    Ok(()) => status.set_text(&format!("{label} ✓")),
+                    Err(error) => {
+                        status.add_css_class("error");
+                        status.set_text(&format!("{label}: {error}"));
+                    }
+                }
+                glib::ControlFlow::Break
+            });
+        });
+    }
+
+    let restore = gtk::Button::with_label("Sicherungen wiederherstellen");
+    restore.add_css_class("add-btn");
+    restore.set_margin_top(12);
+    card.append(&restore);
+    {
+        let window = window.clone();
+        let nav = nav.clone();
+        let target = target.clone();
+        restore.connect_clicked(move |_| {
+            nav.push(&crate::restore::page(
+                &window,
+                std::slice::from_ref(&target),
+            ));
+        });
+    }
+    card
 }
 
 pub fn build(
@@ -33,74 +251,75 @@ pub fn build(
     let state_path = Config::default_state_path();
 
     let page = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    page.set_margin_top(26);
-    page.set_margin_bottom(32);
-    page.set_margin_start(36);
-    page.set_margin_end(36);
+    page.add_css_class("dashboard");
+    page.set_spacing(16);
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    header.set_margin_bottom(30);
-    header.append(&icon(Icon::Cloud, 26, 0.616, 0.486, 1.0));
-    let title = gtk::Label::new(Some("Cloudsave"));
-    title.add_css_class("app-title");
-    title.set_valign(gtk::Align::Center);
-    header.append(&title);
-    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    spacer.set_hexpand(true);
-    header.append(&spacer);
+    let banner = gtk::Box::new(gtk::Orientation::Horizontal, 20);
+    banner.add_css_class("status-banner");
+    let status_symbol = icon(Icon::Refresh, 46, 1.0, 0.72, 0.43);
+    status_symbol.set_halign(gtk::Align::Start);
+    status_symbol.add_css_class("status-symbol");
+    banner.append(&status_symbol);
+    let status_text = gtk::Box::new(gtk::Orientation::Vertical, 5);
+    status_text.set_hexpand(true);
+    banner.append(&status_text);
     let sync_btn = gtk::Button::with_label("Jetzt synchronisieren");
     sync_btn.add_css_class("sync-btn");
     sync_btn.set_valign(gtk::Align::Center);
-    header.append(&sync_btn);
-    page.append(&header);
+    let action = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    action.append(&gtk::Image::from_icon_name("view-refresh-symbolic"));
+    action.append(&gtk::Label::new(Some("Jetzt synchronisieren")));
+    sync_btn.set_child(Some(&action));
+    banner.append(&sync_btn);
+    page.append(&banner);
 
     let status_title = gtk::Label::new(Some("Bereit"));
     status_title.add_css_class("sync-title");
     status_title.set_halign(gtk::Align::Start);
-    page.append(&status_title);
+    status_title.set_xalign(0.0);
+    status_title.set_wrap(true);
+    status_text.append(&status_title);
 
     let status_sub = gtk::Label::new(Some("Noch kein Sync durchgeführt"));
     status_sub.add_css_class("sync-sub");
     status_sub.set_halign(gtk::Align::Start);
     status_sub.set_xalign(0.0);
     status_sub.set_wrap(true);
+    status_sub.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     status_sub.set_selectable(true);
-    status_sub.set_margin_top(6);
-    page.append(&status_sub);
+    status_text.append(&status_sub);
 
     let progress = gtk::ProgressBar::new();
     progress.add_css_class("sync-progress");
     progress.set_fraction(0.0);
-    progress.set_halign(gtk::Align::Start);
-    progress.set_width_request(560);
-    progress.set_margin_top(14);
-    page.append(&progress);
+    progress.set_hexpand(true);
+    progress.set_visible(false);
+    status_text.append(&progress);
 
     let auto_status = gtk::Label::new(None);
     auto_status.set_wrap(true);
     auto_status.set_xalign(0.0);
-    auto_status.add_css_class("dim-label");
-    page.append(&auto_status);
+    auto_status.add_css_class("watch-status");
 
     let cols = gtk::Box::new(gtk::Orientation::Horizontal, 24);
     cols.set_hexpand(true);
-    cols.set_margin_top(30);
+
     page.append(&cols);
 
     let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    left.add_css_class("card");
+    left.add_css_class("panel");
+    left.set_valign(gtk::Align::Fill);
     left.set_hexpand(true);
     cols.append(&left);
 
     let section = gtk::Label::new(Some("Gesicherte Ordner"));
     section.add_css_class("section-title");
     section.set_halign(gtk::Align::Start);
-    section.set_margin_start(4);
-    section.set_margin_top(4);
-    section.set_margin_bottom(12);
+    section.set_margin_bottom(16);
     left.append(&section);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    list.add_css_class("card");
     for folder in config.borrow().folders.clone() {
         append_folder_row(&list, &config, &folder);
     }
@@ -111,7 +330,7 @@ pub fn build(
     add_btn.set_halign(gtk::Align::Start);
     add_btn.set_margin_top(14);
     let add_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    add_box.append(&icon(Icon::Folder, 18, 1.0, 1.0, 1.0));
+    add_box.append(&gtk::Image::from_icon_name("list-add-symbolic"));
     add_box.append(&gtk::Label::new(Some("Ordner hinzufügen")));
     add_btn.set_child(Some(&add_box));
     {
@@ -144,7 +363,6 @@ pub fn build(
 
     let settings_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     settings_card.add_css_class("card");
-    settings_card.set_margin_top(22);
     let expander_btn = gtk::Button::new();
     expander_btn.add_css_class("flat");
     expander_btn.add_css_class("expander-btn");
@@ -163,13 +381,14 @@ pub fn build(
     let revealer = gtk::Revealer::new();
     revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
     let settings_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    settings_body.add_css_class("settings-body");
     let body_sep = gtk::Separator::new(gtk::Orientation::Horizontal);
     body_sep.add_css_class("row-sep");
     settings_body.append(&body_sep);
 
     let interval_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     interval_row.add_css_class("folder-row");
-    let interval_label = gtk::Label::new(Some("Sync-Intervall (Minuten)"));
+    let interval_label = gtk::Label::new(Some("Zusätzlicher Kontrollscan (Minuten)"));
     interval_label.add_css_class("row-label");
     interval_label.set_halign(gtk::Align::Start);
     interval_label.set_hexpand(true);
@@ -192,58 +411,18 @@ pub fn build(
         });
     }
     interval_row.append(&interval_label);
+    interval_spin.update_property(&[gtk::accessible::Property::Label(
+        "Kontrollscan-Intervall in Minuten",
+    )]);
     interval_row.append(&interval_spin);
     settings_body.append(&interval_row);
+    let live_hint = gtk::Label::new(Some("Live-Sync erkennt Dateiänderungen und überträgt sie nach etwa 3 Sekunden Ruhezeit. Der zusätzliche Kontrollscan fängt verpasste Ereignisse auf; er bestimmt nicht die Live-Sync-Geschwindigkeit."));
+    live_hint.set_wrap(true);
+    live_hint.set_xalign(0.0);
+    live_hint.add_css_class("dim-label");
+    settings_body.append(&live_hint);
 
-    let exclusions_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    exclusions_box.add_css_class("folder-row");
-    let exclusions_title = gtk::Label::new(Some("Dateien und Ordner ausschließen"));
-    exclusions_title.set_xalign(0.0);
-    exclusions_title.add_css_class("row-label");
-    exclusions_box.append(&exclusions_title);
-    let exclusions_hint = gtk::Label::new(Some("Ein Muster pro Zeile, z. B. .cache, node_modules oder *.tmp. Pfade mit / gelten relativ zum Quellordner. Vorhandene Sicherungen ausgeschlossener Dateien bleiben erhalten."));
-    exclusions_hint.set_wrap(true);
-    exclusions_hint.set_xalign(0.0);
-    exclusions_hint.add_css_class("dim-label");
-    exclusions_box.append(&exclusions_hint);
-    let exclusions_edit = gtk::TextView::new();
-    exclusions_edit.set_monospace(true);
-    exclusions_edit.set_height_request(88);
-    exclusions_edit
-        .buffer()
-        .set_text(&config.borrow().settings.exclude_patterns.join("\n"));
-    exclusions_box.append(&exclusions_edit);
-    let exclusions_status = gtk::Label::new(None);
-    exclusions_status.set_wrap(true);
-    exclusions_status.set_xalign(0.0);
-    exclusions_box.append(&exclusions_status);
-    let exclusions_save = gtk::Button::with_label("Ausschlüsse speichern");
-    exclusions_box.append(&exclusions_save);
-    {
-        let config = config.clone();
-        exclusions_save.connect_clicked(move |_| {
-            let buffer = exclusions_edit.buffer();
-            let patterns: Vec<String> = buffer
-                .text(&buffer.start_iter(), &buffer.end_iter(), false)
-                .lines()
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-                .map(str::to_owned)
-                .collect();
-            let mut next = config.borrow().clone();
-            match cloudsave_core::validate_exclusion_patterns(&patterns).and_then(|()| {
-                next.settings.exclude_patterns = patterns;
-                next.save(&Config::default_path())
-            }) {
-                Ok(()) => {
-                    *config.borrow_mut() = next;
-                    exclusions_status.set_text("Ausschlüsse gespeichert");
-                }
-                Err(error) => exclusions_status.set_text(&format!("Nicht gespeichert: {error}")),
-            }
-        });
-    }
-    settings_body.append(&exclusions_box);
+    settings_body.append(&crate::exclusion_picker::build(window, config.clone()));
 
     let mode_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     mode_box.add_css_class("folder-row");
@@ -321,53 +500,6 @@ pub fn build(
     let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
     sep.add_css_class("row-sep");
     settings_body.append(&sep);
-    let test_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    test_row.add_css_class("folder-row");
-    let test_label = gtk::Label::new(Some("Ziel-Verbindung"));
-    test_label.add_css_class("row-label");
-    test_label.set_halign(gtk::Align::Start);
-    test_label.set_hexpand(true);
-    let test_btn = gtk::Button::with_label("Verbindung testen");
-    test_btn.set_valign(gtk::Align::Center);
-    {
-        let config = config.clone();
-        let sub = status_sub.clone();
-        test_btn.connect_clicked(move |_| {
-            let targets = config.borrow().targets.clone();
-            let sub = sub.clone();
-            let (tx, rx) = mpsc::channel::<String>();
-            std::thread::spawn(move || {
-                let mut lines = Vec::new();
-                for t in &targets {
-                    let label = cloudsave_core::target_label(t);
-                    let msg = match cloudsave_core::backend_for(t) {
-                        Ok(b) => match b.test_connection() {
-                            Ok(()) => format!("{} ✓", label),
-                            Err(e) => format!("{}: nicht erreichbar ({})", label, e),
-                        },
-                        Err(e) => format!("{}: Fehler ({})", label, e),
-                    };
-                    lines.push(msg);
-                }
-                let _ = tx.send(lines.join("\n"));
-            });
-            glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
-                Ok(msg) => {
-                    sub.set_text(&msg);
-                    glib::ControlFlow::Break
-                }
-                Err(mpsc::TryRecvError::Empty) => glib::ControlFlow::Continue,
-                Err(mpsc::TryRecvError::Disconnected) => glib::ControlFlow::Break,
-            });
-        });
-    }
-    test_row.append(&test_label);
-    test_row.append(&test_btn);
-    settings_body.append(&test_row);
-
-    let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-    sep.add_css_class("row-sep");
-    settings_body.append(&sep);
     let quit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     quit_row.add_css_class("folder-row");
     let quit_label = gtk::Label::new(Some("Beenden"));
@@ -401,72 +533,25 @@ pub fn build(
             "pan-up-symbolic"
         }));
     });
-    left.append(&settings_card);
 
-    let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    right.set_width_request(360);
+    let right = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    right.set_width_request(365);
     cols.append(&right);
-
-    let target = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    target.add_css_class("card");
-    target.add_css_class("target-card");
-    target.set_valign(gtk::Align::Start);
-    {
-        let targets = config.borrow().targets.clone();
-        if targets.is_empty() {
-            let t_title = gtk::Label::new(Some("Kein Endpunkt konfiguriert"));
-            t_title.add_css_class("target-title");
-            t_title.set_halign(gtk::Align::Start);
-            target.append(&t_title);
-        }
-        for (i, t) in targets.iter().enumerate() {
-            if i > 0 {
-                let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-                sep.add_css_class("row-sep");
-                target.append(&sep);
-            }
-            let (t_name, t_sub_text) = match t {
-                Target::Local { path } => ("Lokaler Ordner", path.to_string_lossy().to_string()),
-                Target::Webdav { url, user } => ("WebDAV", format!("{} · Benutzer {}", url, user)),
-            };
-            let t_title = gtk::Label::new(Some(t_name));
-            t_title.add_css_class("target-title");
-            t_title.set_halign(gtk::Align::Start);
-            target.append(&t_title);
-            let t_sub = gtk::Label::new(Some(&t_sub_text));
-            t_sub.add_css_class("target-sub");
-            t_sub.set_halign(gtk::Align::Start);
-            t_sub.set_margin_top(4);
-            t_sub.set_wrap(true);
-            target.append(&t_sub);
-        }
+    let targets = config.borrow().targets.clone();
+    if targets.is_empty() {
+        let empty = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        empty.add_css_class("card");
+        empty.add_css_class("panel");
+        let title = gtk::Label::new(Some("Kein Endpunkt konfiguriert"));
+        title.add_css_class("target-title");
+        title.set_xalign(0.0);
+        title.set_wrap(true);
+        empty.append(&title);
+        right.append(&empty);
     }
-    let t_sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-    t_sep.add_css_class("row-sep");
-    t_sep.set_margin_top(16);
-    t_sep.set_margin_bottom(4);
-    target.append(&t_sep);
-    let auto_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    auto_row.add_css_class("folder-row");
-    auto_row.set_margin_start(-16);
-    auto_row.set_margin_end(-16);
-    auto_row.set_margin_bottom(-13);
-    let auto_label = gtk::Label::new(Some("Automatisch synchronisieren"));
-    auto_label.add_css_class("target-row-label");
-    auto_label.set_halign(gtk::Align::Start);
-    auto_label.set_hexpand(true);
-    let auto_switch = gtk::Switch::new();
-    auto_switch.set_active(config.borrow().settings.auto_sync);
-    {
-        let config = config.clone();
-        auto_switch.connect_active_notify(move |s| {
-            config.borrow_mut().settings.auto_sync = s.is_active();
-            let _ = config.borrow().save(&Config::default_path());
-        });
+    for (index, target) in targets.iter().enumerate() {
+        right.append(&endpoint_card(window, nav, target, index, targets.len()));
     }
-    auto_row.append(&auto_label);
-    auto_row.append(&auto_switch);
-    target.append(&auto_row);
 
     let add_target_btn = gtk::Button::new();
     add_target_btn.add_css_class("add-btn");
@@ -488,29 +573,70 @@ pub fn build(
             ));
         });
     }
-    target.append(&add_target_btn);
-    let restore_button = gtk::Button::with_label("Sicherungen wiederherstellen");
-    restore_button.add_css_class("add-btn");
-    restore_button.set_margin_top(12);
-    target.append(&restore_button);
+    right.append(&add_target_btn);
+
+    let automatic = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    automatic.add_css_class("sync-controls");
+    let auto_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let auto_text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    auto_text.set_hexpand(true);
+    let auto_label = gtk::Label::new(Some("Automatisch synchronisieren"));
+    auto_label.add_css_class("target-row-label");
+    auto_label.set_xalign(0.0);
+    auto_label.set_wrap(true);
+    auto_text.append(&auto_label);
+    let scope = gtk::Label::new(Some("Für alle Endpunkte"));
+    scope.add_css_class("watch-status");
+    scope.set_xalign(0.0);
+    auto_text.append(&scope);
+    let auto_switch = gtk::Switch::new();
+    auto_switch.set_active(config.borrow().settings.auto_sync);
+    auto_switch.set_valign(gtk::Align::Center);
+    auto_switch.update_property(&[gtk::accessible::Property::Label(
+        "Automatisch synchronisieren – für alle Endpunkte",
+    )]);
     {
-        let window = window.clone();
-        let nav = nav.clone();
         let config = config.clone();
-        restore_button.connect_clicked(move |_| {
-            nav.push(&crate::restore::page(&window, &config.borrow().targets));
+        auto_switch.connect_active_notify(move |switch| {
+            config.borrow_mut().settings.auto_sync = switch.is_active();
+            let _ = config.borrow().save(&Config::default_path());
         });
     }
-    right.append(&target);
+    auto_row.append(&auto_text);
+    auto_row.append(&auto_switch);
+    automatic.append(&auto_row);
+    automatic.append(&auto_status);
+    right.append(&automatic);
+
+    let stats = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    stats.set_homogeneous(true);
+    let (files_card, files_value) = stat_card(Icon::File, "Dateien gesichert");
+    let (size_card, size_value) = stat_card(Icon::Storage, "Erfasste Sicherungsgröße");
+    let (time_card, time_value) = stat_card(Icon::Clock, "Letzte Übertragung");
+    files_card.set_tooltip_text(Some("Erfasste Dateikopien über alle Sicherungsziele."));
+    size_card.set_tooltip_text(Some("Größe der erfassten Sicherungskopien über alle Ziele. Dies ist nicht der gesamte belegte oder freie Speicherplatz des Servers."));
+    time_card.set_tooltip_text(Some("Zeitpunkt der letzten erfassten Dateiübertragung."));
+    stats.append(&files_card);
+    stats.append(&size_card);
+    stats.append(&time_card);
+    page.insert_child_after(&stats, Some(&banner));
+    page.append(&settings_card);
 
     let ui = SyncUi {
         title: status_title.clone(),
         sub: status_sub.clone(),
         progress: progress.clone(),
         btn: sync_btn.clone(),
+        banner: banner.clone(),
+        symbol: status_symbol.clone(),
+        files: files_value,
+        size: size_value,
+        last_sync: time_value,
     };
     ui.sub.set_text(&status_sub_text(&state_path));
+    update_stats(&ui, &state_path);
     if config.borrow().targets.is_empty() {
+        set_status(&ui, "error");
         ui.title.set_text("Endpunkt einrichten");
         ui.sub
             .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
@@ -527,7 +653,30 @@ pub fn build(
 
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    let responsive = adw::BreakpointBin::new();
+    responsive.set_size_request(360, 360);
     scrolled.set_child(Some(&page));
+    responsive.set_child(Some(&scrolled));
+    let narrow = adw::Breakpoint::new(
+        adw::BreakpointCondition::parse("max-width: 860px").expect("valid layout breakpoint"),
+    );
+    narrow.add_setter(
+        &cols,
+        "orientation",
+        Some(&gtk::Orientation::Vertical.to_value()),
+    );
+    narrow.add_setter(&right, "width-request", Some(&(-1_i32).to_value()));
+    narrow.add_setter(
+        &banner,
+        "orientation",
+        Some(&gtk::Orientation::Vertical.to_value()),
+    );
+    narrow.add_setter(
+        &stats,
+        "orientation",
+        Some(&gtk::Orientation::Vertical.to_value()),
+    );
+    responsive.add_breakpoint(narrow);
     scrolled.set_vexpand(true);
 
     if autostart {
@@ -541,11 +690,18 @@ pub fn build(
         let mut watch_config = WatchConfig::for_config(&config.borrow(), &state_path);
         let watcher = ChangeWatcher::new(watch_config.clone());
         let mut pending: Option<Instant> = None;
+        let mut watch_ready = false;
+        let mut watch_error: Option<String> = None;
         let mut last = Instant::now();
+        let mut stats_updated = Instant::now();
         let owner = page.downgrade();
         glib::timeout_add_local(Duration::from_millis(500), move || {
             if owner.upgrade().is_none() {
                 return glib::ControlFlow::Break;
+            }
+            if stats_updated.elapsed() >= Duration::from_secs(30) {
+                update_stats(&ui, &state_path);
+                stats_updated = Instant::now();
             }
             let cfg = config.borrow();
             let next_watch_config = WatchConfig::for_config(&cfg, &state_path);
@@ -553,18 +709,34 @@ pub fn build(
                 watch_config = next_watch_config;
                 watcher.update(watch_config.clone());
                 pending = None;
+                watch_ready = false;
+                watch_error = None;
             }
             while let Ok(event) = watcher.try_recv() {
                 match event {
                     WatchEvent::Changed if cfg.settings.auto_sync => pending = Some(Instant::now()),
                     WatchEvent::Ready => {
-                        auto_status.set_text("Änderungen werden automatisch erkannt.")
+                        watch_ready = true;
+                        watch_error = None;
                     }
-                    WatchEvent::Unavailable(error) => auto_status.set_text(&format!(
-                        "Änderungserkennung eingeschränkt; Zeitplan bleibt aktiv: {error}"
-                    )),
+                    WatchEvent::Unavailable(error) => {
+                        watch_ready = false;
+                        watch_error = Some(error);
+                    }
                     _ => {}
                 }
+            }
+            let message = if !cfg.settings.auto_sync {
+                "Live-Sync pausiert. Manuelles Synchronisieren ist weiterhin möglich.".to_string()
+            } else if let Some(error) = &watch_error {
+                format!("Live-Sync eingeschränkt; der Kontrollscan bleibt aktiv: {error}")
+            } else if watch_ready {
+                "Live-Sync aktiv · Übertragung nach etwa 3 Sekunden Ruhezeit.".to_string()
+            } else {
+                "Live-Sync wird vorbereitet …".to_string()
+            };
+            if auto_status.text().as_str() != message {
+                auto_status.set_text(&message);
             }
             if !cfg.settings.auto_sync {
                 pending = None;
@@ -588,7 +760,7 @@ pub fn build(
         });
     }
 
-    scrolled.upcast()
+    responsive.upcast()
 }
 
 fn switch_row(body: &gtk::Box, name: &str, active: bool, on_toggle: impl Fn(bool) + 'static) {
@@ -620,16 +792,32 @@ fn append_folder_row(list: &gtk::Box, config: &Rc<RefCell<Config>>, path: &Path)
     let check = gtk::CheckButton::new();
     check.set_active(true);
     row.append(&check);
-    row.append(&icon(Icon::Folder, 20, 0.50, 0.70, 0.96));
+    row.append(&icon(Icon::Folder, 30, 0.83, 0.80, 0.77));
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| path.to_string_lossy().to_string());
     let label = gtk::Label::new(Some(&name));
-    label.add_css_class("row-label");
-    label.set_halign(gtk::Align::Start);
-    label.set_hexpand(true);
-    row.append(&label);
+    label.add_css_class("folder-name");
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_width_chars(15);
+    label.set_max_width_chars(40);
+    label.set_tooltip_text(Some(&name));
+    check.update_property(&[gtk::accessible::Property::Label(&format!("{name} sichern"))]);
+    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    text.set_hexpand(true);
+    text.append(&label);
+    let path_text = path.to_string_lossy();
+    let location = gtk::Label::new(Some(&path_text));
+    location.add_css_class("folder-path");
+    location.set_xalign(0.0);
+    location.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    location.set_width_chars(15);
+    location.set_max_width_chars(45);
+    location.set_tooltip_text(Some(&path_text));
+    text.append(&location);
+    row.append(&text);
     let config = config.clone();
     let path = path.to_path_buf();
     check.connect_toggled(move |c| {
@@ -659,6 +847,7 @@ fn status_sub_text(state_path: &Path) -> String {
 
 fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     if config.borrow().targets.is_empty() {
+        set_status(ui, "error");
         ui.title.set_text("Endpunkt einrichten");
         ui.sub
             .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
@@ -667,6 +856,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         return;
     }
     ui.btn.set_sensitive(false);
+    set_status(ui, "busy");
     ui.title.set_text("Sync läuft");
     ui.sub.set_text("Dateien werden abgeglichen …");
     ui.progress.set_fraction(0.0);
@@ -675,7 +865,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     let state_path_owned = state_path.to_path_buf();
     let (tx, rx) = mpsc::channel::<Result<SyncReport, String>>();
     std::thread::spawn(move || {
-        let res = cloudsave_core::sync(&cfg, &state_path_owned).map_err(|e| e.to_string());
+        let res = crate::jobs::sync(&cfg, &state_path_owned).map_err(|e| e.to_string());
         let _ = tx.send(res);
     });
 
@@ -683,11 +873,14 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
     let state_path = state_path.to_path_buf();
     glib::timeout_add_local(Duration::from_millis(150), move || match rx.try_recv() {
         Ok(Ok(report)) => {
+            update_stats(&ui, &state_path);
             if report.errors.is_empty() {
+                set_status(&ui, "success");
                 ui.title.set_text("Alles synchronisiert");
                 ui.sub.set_text(&status_sub_text(&state_path));
                 ui.progress.set_fraction(1.0);
             } else {
+                set_status(&ui, "error");
                 ui.title
                     .set_text(&format!("Sync mit {} Fehler(n)", report.errors.len()));
                 ui.sub.set_text(&format!(
@@ -701,6 +894,8 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
             glib::ControlFlow::Break
         }
         Ok(Err(e)) => {
+            set_status(&ui, "error");
+            update_stats(&ui, &state_path);
             ui.title.set_text("Sync fehlgeschlagen");
             ui.sub.set_text(&e);
             ui.progress.set_fraction(0.0);
@@ -712,6 +907,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
             glib::ControlFlow::Continue
         }
         Err(mpsc::TryRecvError::Disconnected) => {
+            set_status(&ui, "error");
             ui.title.set_text("Sync abgebrochen");
             ui.sub
                 .set_text("Mit „Jetzt synchronisieren“ erneut versuchen.");

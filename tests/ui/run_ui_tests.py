@@ -11,7 +11,7 @@ os.environ['GDK_BACKEND'] = 'x11'
 import gi
 gi.require_version('Gdk', '3.0')
 gi.require_version('GdkX11', '3.0')
-from gi.repository import Gdk, GdkX11
+from gi.repository import Gdk, GdkX11, GLib
 
 HERE = pathlib.Path(__file__).resolve().parent
 APP = 'org.cloudsave.Cloudsave'
@@ -202,12 +202,24 @@ class UI:
         self.tree()
         stem=f'{self.name}-{tag}'
         (OUT/(stem+'.tree.tsv')).write_text((self.root/'control/tree.tsv').read_text())
+        evidence=[stem+'.tree.tsv']
         if self.xid:
             display=Gdk.Display.get_default()
             window=GdkX11.X11Window.foreign_new_for_display(display,self.xid)
-            pixbuf=Gdk.pixbuf_get_from_window(window,0,0,window.get_width(),window.get_height())
-            if pixbuf: pixbuf.savev(str(OUT/(stem+'.png')),'png',[],[])
-        return [stem+'.png',stem+'.tree.tsv']
+            window.set_events(window.get_events() | Gdk.EventMask.STRUCTURE_MASK)
+            display.sync()
+            context=GLib.MainContext.default()
+            while context.pending(): context.iteration(False)
+            # Foreign GdkWindow sizes can stay cached after xdotool resizes.
+            info=run('xwininfo','-id',str(self.xid))
+            dimensions={line.split(':',1)[0].strip():int(line.split(':',1)[1]) for line in info.splitlines()
+                        if line.strip().startswith(('Width:','Height:'))}
+            if window.is_viewable():
+                pixbuf=Gdk.pixbuf_get_from_window(window,0,0,dimensions['Width'],dimensions['Height'])
+                if pixbuf:
+                    pixbuf.savev(str(OUT/(stem+'.png')),'png',[],[])
+                    evidence.insert(0,stem+'.png')
+        return evidence
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -216,6 +228,12 @@ class UI:
             except subprocess.TimeoutExpired:
                 os.killpg(self.proc.pid,signal.SIGKILL);self.proc.wait(timeout=5)
         if hasattr(self,'logfile'):self.logfile.close()
+        # Consume DestroyNotify before another process can reuse the same XID.
+        # Otherwise GDK may associate its stale foreign window with the new app.
+        Gdk.Display.get_default().sync()
+        context=GLib.MainContext.default()
+        while context.pending(): context.iteration(False)
+        self.xid=None
         if self.cfg.exists():
             (OUT/(self.name+'.config.toml')).write_text(self.cfg.read_text())
 
@@ -270,7 +288,7 @@ def onboarding():
             typ='AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow'
             n=ui.find(typ,title);ui.command('text',n['id'],value)
         validations=[]
-        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('https://example.com/dav',True)]:
+        for url,valid in [('',False),('  ',False),('not a url',False),('http://example.com',False),('ftp://example.com',False),('https://example.com/dav',True),('example.com:8443/dav',True)]:
             n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],url)
             validations.append(bool(ui.find('GtkButton','Weiter')['sensitive'])==valid)
         n=ui.find('AdwEntryRow','Server-URL');ui.command('text',n['id'],'not a url')
@@ -299,6 +317,7 @@ def dashboard():
     ui=UI('dashboard');source,targets=fixture(ui)
     try:
         ui.launch();ui.idle()
+        empty_stats=all(text in ui.labels() for text in ('0','0 B','Noch nie'))
         files=[p/'Documents/save.txt' for p in targets]
         record('UI-09','Auto-sync OFF suppresses startup sync',not any(p.exists() for p in files),
                f'Target files created at startup: {[p.exists() for p in files]}; auto_sync=false',
@@ -314,6 +333,19 @@ def dashboard():
         ui.click('Jetzt synchronisieren');ui.idle()
         record('UI-11','Manual sync propagates changed content',all(p.read_bytes()==(source/'save.txt').read_bytes() for p in files),
                'Both targets match edited source','Explicit sync updates every target')
+        expected_size=2*sum(p.stat().st_size for p in source.rglob('*') if p.is_file())
+        live_stats='4' in ui.labels() and f'{expected_size} B' in ui.labels()
+        narrow=True
+        if BINARY:
+            run('xdotool','windowsize',str(ui.xid),'560','900');time.sleep(.4)
+            info=run('xwininfo','-id',str(ui.xid))
+            width=int(next(line.split(':',1)[1] for line in info.splitlines() if line.strip().startswith('Width:')))
+            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel 1','Ziel 2','Erfasste Sicherungsgröße'))
+            narrow=narrow and any(name.endswith('.png') for name in ui.snapshot('orange-narrow'))
+            run('xdotool','windowsize',str(ui.xid),'1180','820');time.sleep(.4)
+        record('UI-32','Dashboard shows actual backup statistics and adapts to narrow windows',empty_stats and live_stats and narrow,
+               f'Empty state={empty_stats}; expected 4 copies / {expected_size} B={live_stats}; narrow layout={narrow}',
+               'Zero before first sync; actual counts and bytes after sync; source and target panels remain reachable',ui.snapshot('orange-dashboard'))
         ui.click('Einstellungen')
         spin=ui.find('GtkSpinButton');ui.command('value',spin['id'],2)
         record('UI-12','Interval setting persists',tomllib.loads(ui.cfg.read_text())['settings']['sync_interval_minutes']==2,
@@ -495,21 +527,47 @@ def backup_mode():
     finally:ui.stop()
 
 
+def open_exclusions(ui):
+    menu=ui.find('GtkMenuButton')
+    button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
+    ui.command('click',button['id']);time.sleep(.25)
+
+
 def exclusion_settings():
-    ui=UI('exclusion-settings');source,targets=fixture(ui)
+    ui=UI('exclusion-settings',exclude_patterns=['*.legacy']);source,targets=fixture(ui)
     (source/'old.tmp').write_text('keep existing backup')
+    def patterns():return tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns',[])
     try:
         ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Einstellungen')
-        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'*.tmp');ui.click('Ausschlüsse speichern')
-        saved=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp']
-        editor=ui.find('GtkTextView');ui.command('buffer',editor['id'],'[');ui.click('Ausschlüsse speichern')
-        invalid_rejected=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')==['*.tmp'] and any('Nicht gespeichert' in label for label in ui.labels())
-        (source/'old.tmp').unlink();(source/'new.tmp').write_text('ignore new file')
+        compact=not any(n['type']=='GtkTextView' and n['mapped'] for n in ui.tree())
+        open_exclusions(ui)
+        ui.set_active('GtkCheckButton',True,'Temporäre Dateien')
+        preset=set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        ui.set_active('GtkCheckButton',True,'Cache-Ordner')
+        cache=set(patterns())=={'*.legacy','*.tmp','*.temp','.cache','cache','Cache'}
+        ui.set_active('GtkCheckButton',False,'Cache-Ordner')
+        deselect=set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        ui.click('Eigene Regel hinzufügen …')
+        entry=ui.find('GtkEntry');ui.command('text',entry['id'],'[')
+        invalid_rejected=not ui.find('GtkButton','Regel hinzufügen')['sensitive'] and set(patterns())=={'*.legacy','*.tmp','*.temp'}
+        entry=ui.find('GtkEntry');ui.command('text',entry['id'],'*.bak');ui.click('Regel hinzufügen')
+        custom=set(patterns())=={'*.legacy','*.tmp','*.temp','*.bak'}
+        open_exclusions(ui);ui.click('Eigene Regel hinzufügen …');ui.click('Abbrechen')
+        cancelled=set(patterns())=={'*.legacy','*.tmp','*.temp','*.bak'}
+        open_exclusions(ui)
+        label=ui.find('GtkLabel','*.legacy');row=ui.nodes[label['parent']]
+        remove=next(n for n in ui.descendants(row) if n['type']=='GtkButton' and n['label']=='Entfernen')
+        ui.command('click',remove['id']);time.sleep(.2)
+        removed=set(patterns())=={'*.tmp','*.temp','*.bak'}
+        run('xdotool','key','Escape');time.sleep(.2)
+        (source/'old.tmp').unlink();(source/'new.tmp').write_text('ignore new file');(source/'new.bak').write_text('ignore custom rule')
         ui.click('Jetzt synchronisieren');ui.idle()
-        record('UI-26','Exclusions validate and preserve existing excluded backups',saved and invalid_rejected and
-               all((target/'Documents/old.tmp').exists() and not (target/'Documents/new.tmp').exists() for target in targets),
-               f'Saved={saved}; invalid pattern rejected={invalid_rejected}',
-               'Invalid patterns do not replace saved rules; excluded backup files are retained')
+        safe=all((target/'Documents/old.tmp').exists() and not (target/'Documents/new.tmp').exists() and not (target/'Documents/new.bak').exists() for target in targets)
+        ui.stop();ui.launch();ui.idle();ui.click('Einstellungen');open_exclusions(ui)
+        persisted=ui.find('GtkCheckButton','Temporäre Dateien')['active']==1 and '*.bak' in ui.labels() and set(patterns())=={'*.tmp','*.temp','*.bak'}
+        record('UI-26','Clickable exclusions, custom rule validation and backup preservation',compact and preset and cache and deselect and invalid_rejected and custom and cancelled and removed and safe and persisted,
+               f'Compact={compact}; presets={preset and cache and deselect}; invalid blocked={invalid_rejected}; custom/cancel/remove={custom and cancelled and removed}; backup safety={safe}; persisted={persisted}',
+               'No typing needed for presets; custom dialog validates before saving; cancellation keeps rules; existing excluded backups stay',ui.snapshot('exclusion-presets'))
     finally:ui.stop()
 
 
@@ -517,7 +575,7 @@ def automatic_changes():
     ui=UI('automatic-changes',auto_sync=True,exclude_patterns=['*.tmp']);source,targets=fixture(ui)
     try:
         ui.launch();ui.idle()
-        ready=eventually(lambda:any('Änderungen werden automatisch erkannt' in label for label in ui.labels()))
+        ready=eventually(lambda:any('Live-Sync aktiv' in label for label in ui.labels()))
         original=(source/'save.txt').stat()
         (source/'save.txt').write_text('QA-SAVE-v2\n')
         os.utime(source/'save.txt',ns=(original.st_atime_ns,original.st_mtime_ns+1))
@@ -526,7 +584,7 @@ def automatic_changes():
         previous=(targets[0]/'Documents/save.txt').read_bytes()
         (source/'save.txt').write_text('manual-only after auto switch is disabled, even longer')
         time.sleep(4.5)
-        paused=all((target/'Documents/save.txt').read_bytes()==previous for target in targets)
+        paused=all((target/'Documents/save.txt').read_bytes()==previous for target in targets) and any('Live-Sync pausiert' in label for label in ui.labels())
         ui.click('Jetzt synchronisieren');ui.idle()
         record('UI-27','Filesystem events synchronize after debounce and respect auto OFF',ready and propagated and paused and
                all((target/'Documents/save.txt').read_bytes()==(source/'save.txt').read_bytes() for target in targets),
@@ -559,6 +617,210 @@ def restore_ui():
     finally:ui.stop()
 
 
+
+def endpoint_cards():
+    ui=UI('endpoint-cards');source,targets=fixture(ui)
+    (targets[0]/'Archive').mkdir(parents=True)
+    (targets[0]/'Archive/old.txt').write_text('existing backup')
+    targets[1].write_text('this file deliberately blocks the second endpoint')
+    def card_nodes(title):
+        heading=ui.find('GtkLabel',title)
+        card=ui.nodes[heading['parent']]
+        return ui.descendants(card)
+    def click_in_card(title,label):
+        node=next(n for n in card_nodes(title) if n['type']=='GtkButton' and n['label']==label)
+        ui.command('click',node['id']);time.sleep(.4)
+    try:
+        ui.launch();ui.idle()
+        cards=[card_nodes('Ziel 1'),card_nodes('Ziel 2')]
+        add=ui.find('GtkButton','Weiteren Endpunkt hinzufügen')
+        separate=all(add['id'] not in [n['id'] for n in nodes] and
+                     sum(n['type']=='GtkButton' and n['label']=='Verbindung testen' for n in nodes)==1 and
+                     sum(n['type']=='GtkButton' and n['label']=='Sicherungen wiederherstellen' for n in nodes)==1
+                     for nodes in cards)
+        global_auto='Für alle Endpunkte' in ui.labels() and sum(n['type']=='GtkSwitch' and n['mapped'] for n in ui.tree())==1
+        ui.set_active('GtkSwitch',True);enabled=tomllib.loads(ui.cfg.read_text())['settings']['auto_sync']
+        ui.set_active('GtkSwitch',False);paused=not tomllib.loads(ui.cfg.read_text())['settings']['auto_sync']
+        click_in_card('Ziel 1','Verbindung testen')
+        first_ok=eventually(lambda:any('✓' in n['label'] and str(targets[0]) in n['label'] for n in card_nodes('Ziel 1')))
+        click_in_card('Ziel 2','Verbindung testen')
+        second_error=eventually(lambda:any(str(targets[1]) in n['label'] and ':' in n['label'] and '✓' not in n['label'] for n in card_nodes('Ziel 2') if n['type']=='GtkLabel' and n['label'].startswith('Lokal:')))
+        first_still_ok=any('✓' in n['label'] for n in card_nodes('Ziel 1'))
+        click_in_card('Ziel 2','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        second_restore=eventually(lambda:any('Sicherungsziel nicht gefunden' in text and str(targets[1]) in text for text in ui.labels()))
+        back=ui.find('AdwBackButton');button=next(n for n in ui.descendants(back) if n['type']=='GtkButton');ui.command('click',button['id']);time.sleep(.4)
+        click_in_card('Ziel 1','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        first_restore=eventually(lambda:any('1 Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
+        found=any('Archive/old.txt' in text for text in ui.labels())
+        record('UI-33','Separate endpoint cards keep add action outside and scope connection/restore actions',
+               separate and global_auto and enabled and paused and first_ok and second_error and first_still_ok and second_restore and first_restore and found,
+               f'Separate cards={separate}; global auto={global_auto and enabled and paused}; tests isolated={first_ok and second_error and first_still_ok}; restore isolated={second_restore and first_restore and found}',
+               'One card per endpoint; add outside; global auto is explicit; each card tests and restores only its own target',ui.snapshot('scoped-restore'))
+    finally:ui.stop()
+
+
+
+def native_header_layout():
+    ui=UI('native-header');source,targets=fixture(ui)
+    settings=ui.root/'config/gtk-4.0/settings.ini';settings.parent.mkdir(parents=True)
+    settings.write_text('[Settings]\ngtk-decoration-layout=icon,close:minimize,maximize\n')
+    try:
+        ui.launch();ui.idle()
+        header=ui.find('AdwHeaderBar');nodes=ui.descendants(header)
+        controls=[n for n in nodes if n['type']=='GtkWindowControls' and n['mapped']]
+        button_counts=[sum(n['type']=='GtkButton' and n['mapped'] for n in ui.descendants(control)) for control in controls]
+        icons=[]
+        for control in controls:
+            for n in ui.descendants(control):
+                if n['type'] not in ('GtkImage','GtkWindowIcon') or not n['mapped']:continue
+                parent=n['parent'];inside_button=False
+                while parent!=control['id'] and parent>=0:
+                    if ui.nodes[parent]['type']=='GtkButton':inside_button=True
+                    parent=ui.nodes[parent]['parent']
+                if not inside_button:icons.append(n)
+        brand=sum(n['type']=='GtkDrawingArea' and n['mapped'] for n in nodes)
+        record('UI-34','Native icon decoration does not duplicate the brand and preserves left/right controls',
+               button_counts==[1,2] and not icons and brand==1,
+               f'Left/right buttons={button_counts}; extra native icons={len(icons)}; brand marks={brand}',
+               'Desktop icon/menu decoration removed; close remains left and minimize/maximize remain right',ui.snapshot('native-icon-layout'))
+    finally:ui.stop()
+
+
+def exclusion_folder_picker():
+    ui=UI('exclusion-folder');source,targets=fixture(ui)
+    selected=source/'Cache [old]';selected.mkdir();(selected/'private.bin').write_bytes(b'not backed up')
+    similar=source/'Cache o';similar.mkdir();(similar/'keep.bin').write_bytes(b'keep this backup')
+    outside=ui.root/'not-a-source';outside.mkdir()
+    def choose(path):
+        open_exclusions(ui);ui.click('Ordner auswählen …')
+        run('xdotool','key','ctrl+l');time.sleep(.2)
+        entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(path));run('xdotool','key','Return')
+        if not eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in ui.tree()),3):ui.click('_Select')
+        time.sleep(.3)
+    try:
+        ui.launch();ui.idle();ui.click('Einstellungen')
+        choose(outside)
+        rejected=any('außerhalb' in text for text in ui.labels()) and not tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns')
+        choose(selected)
+        patterns=tomllib.loads(ui.cfg.read_text())['settings'].get('exclude_patterns',[])
+        ui.click('Jetzt synchronisieren');ui.idle()
+        exact=all(not (target/'Documents/Cache [old]/private.bin').exists() and
+                  (target/'Documents/Cache o/keep.bin').read_bytes()==b'keep this backup' for target in targets)
+        record('UI-35','Choose an excluded folder without typing patterns and escape literal names',rejected and patterns==['Cache [[]old[]]/**'] and exact,
+               f'Outside path rejected={rejected}; saved={patterns}; exact folder excluded in both targets={exact}',
+               'Picker creates a relative subtree rule; glob characters in folder names stay literal; unrelated data is still backed up',ui.snapshot('folder-rule'))
+    finally:ui.stop()
+
+
+def recovery_choose(ui, path, button='Separaten Ordner wählen …', cancel=False):
+    ui.click(button)
+    if cancel:
+        ui.click('_Cancel');return
+    run('xdotool','key','ctrl+l');time.sleep(.2)
+    entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(path));run('xdotool','key','Return')
+    if not eventually(lambda:not any(n['type']=='GtkFileChooserDialog' and n['mapped'] for n in ui.tree()),3):ui.click('_Select')
+
+
+def enter_existing(ui, target, recovery=True):
+    if recovery:
+        ui.click('Vorhandene Sicherung wiederherstellen')
+    else:
+        ui.click('Einrichtung starten')
+        for label in ('Bilder','Downloads'):ui.set_active('GtkCheckButton',True,label)
+        ui.click('Weiter')
+    choose_native_folder(ui,target);ui.click('Weiter');ui.set_active('GtkSwitch',False)
+    ui.click('Endpunkt prüfen & einrichten' if recovery else 'Sync einrichten & starten')
+    assert eventually(lambda:'Bestehende Sicherung gefunden' in ui.labels())
+
+
+def guided_recovery():
+    ui=UI('reinstall-originals',home_dirs=('Bilder','Downloads'))
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True);(backup/'Downloads').mkdir()
+    (backup/'Bilder/photo.jpg').write_bytes(b'old photo');(backup/'Downloads/install.iso').write_bytes(b'old download')
+    try:
+        ui.launch();enter_existing(ui,backup,recovery=False)
+        cfg=tomllib.loads(ui.cfg.read_text())
+        paused=not cfg['settings']['auto_sync'] and cfg['settings']['pending_recovery']['path']==str(backup)
+        untouched=not any((ui.root/'home/Bilder').iterdir()) and (backup/'Bilder/photo.jpg').read_bytes()==b'old photo'
+        ui.cfg.write_text(ui.cfg.read_text().replace('sync_mode = "backup"','sync_mode = "mirror"'))
+        ui.snapshot('found-before-sync');ui.stop();ui.launch()
+        resumed=eventually(lambda:'Bestehende Sicherung gefunden' in ui.labels()) and not any((ui.root/'home/Bilder').iterdir())
+        ui.click('Ausgewählte Ordner wiederherstellen')
+        complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        restored=(ui.root/'home/Bilder/photo.jpg').read_bytes()==b'old photo' and (ui.root/'home/Downloads/install.iso').read_bytes()==b'old download'
+        safe=cfg['settings']['sync_mode']=='backup' and cfg['settings']['auto_sync'] and 'pending_recovery' not in cfg['settings']
+        record('UI-36','Whole-PC recovery is offered before sync and survives restart in mirror mode',paused and untouched and resumed and complete and restored and safe,
+            f'Paused={paused}; untouched before choice={untouched}; restart resumed={resumed}; whole folders restored={restored}; backup mode after recovery={safe}',
+            'No upload or mirror before recovery; original home folders restored without per-file selection; completed setup resumes in Backup mode',ui.snapshot('originals-complete'))
+        ui.click('Zur Übersicht');ui.idle()
+    finally:ui.stop()
+
+
+def separate_recovery():
+    ui=UI('reinstall-separate')
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True);(backup/'Bilder/photo.jpg').write_bytes(b'old photo')
+    output=ui.root/'separate';output.mkdir()
+    try:
+        ui.launch();enter_existing(ui,backup)
+        ui.set_active('GtkCheckButton',True,'In einen separaten Ordner wiederherstellen')
+        blocked=not ui.find('GtkButton','Ausgewählte Ordner wiederherstellen')['sensitive']
+        recovery_choose(ui,output,cancel=True)
+        cancelled=not ui.find('GtkButton','Ausgewählte Ordner wiederherstellen')['sensitive']
+        recovery_choose(ui,output)
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        correct=(output/'Bilder/photo.jpg').read_bytes()==b'old photo' and not (ui.root/'home/Bilder').exists() and not cfg['folders'] and not cfg['settings']['auto_sync']
+        record('UI-37','Separate-folder recovery restores all files and leaves automatic sync paused',blocked and cancelled and complete and correct,
+            f'Needs chosen folder={blocked}; cancel safe={cancelled}; output and config safe={correct}',
+            'Explicit separate destination; whole folders restored; extraction does not enable uploads or create home sources',ui.snapshot('separate-complete'))
+    finally:ui.stop()
+
+
+def catalog_recovery():
+    ui=UI('reinstall-catalog')
+    backup=ui.root/'StorageBox';(backup/'Projekt').mkdir(parents=True);(backup/'.cloudsave').mkdir()
+    (backup/'Projekt/save.txt').write_text('portable nested data')
+    (backup/'.cloudsave/folders.toml').write_text('version=1\n[[folders]]\nnamespace="Projekt"\nhome_relative="Arbeit/Projekt"\n[[folders]]\nnamespace="Leer"\nhome_relative="Leer"\n')
+    try:
+        ui.launch();enter_existing(ui,backup)
+        mapped=str(ui.root/'home/Arbeit/Projekt') in ui.labels()
+        ui.snapshot('portable-mapping')
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        correct=(ui.root/'home/Arbeit/Projekt/save.txt').read_text()=='portable nested data' and (ui.root/'home/Leer').is_dir()
+        aliases=cfg['settings']['folder_names'].get(str(ui.root/'home/Arbeit/Projekt'))=='Projekt' and cfg['settings']['folder_home_paths'].get(str(ui.root/'home/Arbeit/Projekt'))=='Arbeit/Projekt'
+        ui.click('Zur Übersicht');ui.idle()
+        stable=not (backup/'Arbeit').exists() and (backup/'Projekt/save.txt').read_text()=='portable nested data'
+        record('UI-38','Portable catalog restores nested and empty source folders with stable remote names',mapped and complete and correct and aliases and stable,
+            f'Preview mapping={mapped}; nested/empty restored={correct}; aliases persisted={aliases}; remote namespace stable={stable}',
+            'Saved home-relative paths restored; metadata is not a user file; fresh sync preserves backup namespaces',ui.snapshot('catalog-dashboard'))
+    finally:ui.stop()
+
+
+def recovery_conflict_and_failure():
+    ui=UI('reinstall-conflict',home_dirs=('Bilder',))
+    backup=ui.root/'StorageBox';(backup/'Bilder').mkdir(parents=True)
+    (backup/'Bilder/a.txt').write_text('old a');(backup/'Bilder/b.txt').write_text('old b')
+    source=ui.root/'home/Bilder';(source/'a.txt').write_text('keep local a')
+    outside=ui.root/'outside';outside.mkdir()
+    source.rename(ui.root/'original-bilder');source.symlink_to(outside,target_is_directory=True)
+    try:
+        ui.launch();enter_existing(ui,backup)
+        ui.click('Ausgewählte Ordner wiederherstellen')
+        rejected=eventually(lambda:any('Wiederherstellung nicht abgeschlossen' in label for label in ui.labels())) and not any(outside.iterdir())
+        cfg=tomllib.loads(ui.cfg.read_text());pending=not cfg['settings']['auto_sync'] and 'pending_recovery' in cfg['settings']
+        source.unlink();(ui.root/'original-bilder').rename(source)
+        ui.click('Ausgewählte Ordner wiederherstellen');complete=eventually(lambda:'Zur Übersicht' in ui.labels())
+        cfg=tomllib.loads(ui.cfg.read_text())
+        preserved=(source/'a.txt').read_text()=='keep local a' and (source/'b.txt').read_text()=='old b' and (backup/'Bilder/a.txt').read_text()=='old a' and not cfg['settings']['auto_sync']
+        record('UI-39','Failed recovery stays paused; retry retains local conflicts and remote backups',rejected and pending and complete and preserved,
+            f'Symlink rejected={rejected}; pending persisted={pending}; retry complete={complete}; local and backup retained={preserved}',
+            'No unsafe path writes; failure never starts mirroring; existing local files retained and conflicts keep Live-Sync paused',ui.snapshot('conflicts-complete'))
+    finally:ui.stop()
+
+
+
 def main():
     global OUT, BINARY
     parser=argparse.ArgumentParser(description=__doc__)
@@ -582,7 +844,7 @@ def main():
                      'Widget activation/property changes, not physical mouse/keyboard or accessibility certification'])
     (OUT/'environment.json').write_text(json.dumps(metadata,indent=2,ensure_ascii=False))
     try:
-        for test in (onboarding,dashboard,missing_source,empty_targets):test()
+        for test in (onboarding,dashboard,endpoint_cards,missing_source,empty_targets):test()
         empty_or_missing_home()
         unavailable_keyring()
         backup_mode()
@@ -590,6 +852,10 @@ def main():
         automatic_changes()
         if BINARY:restore_ui()
         if BINARY:native_picker()
+        if BINARY:native_header_layout()
+        if BINARY:exclusion_folder_picker()
+        if BINARY:
+            for test in (guided_recovery,separate_recovery,catalog_recovery,recovery_conflict_and_failure):test()
     except Exception:
         (OUT/'harness-error.txt').write_text(traceback.format_exc());traceback.print_exc();return 2
     total=len(RESULTS);failed=sum(r['status']=='FAIL' for r in RESULTS)

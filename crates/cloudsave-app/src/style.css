@@ -1,0 +1,176 @@
+@define-color accent_color #ffa348;
+@define-color accent_bg_color #e76b08;
+@define-color accent_fg_color #ffffff;
+@define-color window_bg_color #1c1a18;
+@define-color window_fg_color #f6f2ee;
+@define-color view_bg_color #24211f;
+@define-color view_fg_color #f6f2ee;
+@define-color card_bg_color #302b27;
+@define-color headerbar_bg_color #24211f;
+
+.cloudsave-window, .window-bg {
+    background-color: #1c1a18;
+    color: #f6f2ee;
+}
+.cloudsave-header {
+    background: linear-gradient(120deg, #302a25, #201e1c 65%);
+    border-bottom: 1px solid rgba(255, 209, 166, 0.13);
+    padding: 9px 18px;
+}
+.brand-mark {
+    min-width: 44px;
+    min-height: 44px;
+    border-radius: 12px;
+    box-shadow: 0 3px 18px rgba(255, 121, 13, 0.22);
+}
+
+.app-title { font-size: 23px; font-weight: 800; color: #fffaf5; }
+.main-card {
+    background:
+        radial-gradient(ellipse at 90% 0%, rgba(222, 105, 25, 0.12), transparent 55%),
+        linear-gradient(150deg, #24211e, #1b1a19 75%);
+}
+.dashboard { padding: 20px 22px; }
+
+.status-banner {
+    background:
+        radial-gradient(ellipse at 70% 0%, rgba(255, 143, 30, 0.22), transparent 70%),
+        linear-gradient(115deg, #3d3022, #33251b 60%, #392619);
+    border: 1px solid rgba(255, 173, 81, 0.55);
+    border-radius: 18px;
+    padding: 20px 24px;
+    box-shadow: inset 0 1px rgba(255, 222, 176, 0.1), 0 4px 24px rgba(224, 102, 12, 0.09);
+}
+.sync-title { font-size: 26px; font-weight: 800; color: #fffaf5; }
+.sync-sub { font-size: 14px; color: #d2c3b6; }
+.status-symbol { color: #ffb66d; }
+.status-banner.success .status-symbol { color: #a4df8a; }
+.status-banner.error { border-color: #e68e7d; }
+.status-banner.error .status-symbol { color: #ffad9a; }
+.sync-btn, button.suggested-action {
+    background: linear-gradient(180deg, #f28b16, #bf5704 55%, #a94400);
+    color: #ffffff;
+    border: 1px solid rgba(255, 198, 110, 0.7);
+    border-radius: 13px;
+    padding: 13px 19px;
+    font-weight: 700;
+    box-shadow: inset 0 1px rgba(255, 239, 204, 0.25), 0 4px 18px rgba(235, 103, 4, 0.18);
+    transition: box-shadow 180ms ease, background 180ms ease;
+}
+.sync-btn:hover, button.suggested-action:hover {
+    background: linear-gradient(180deg, #ffa42e, #c05a05 55%, #ae4900);
+    box-shadow: inset 0 1px rgba(255, 239, 204, 0.35), 0 4px 25px rgba(255, 130, 22, 0.32);
+}
+.sync-btn {
+    font-size: 19px;
+    background: linear-gradient(180deg, #ff9817, #d96b06 55%, #c85200);
+}
+.sync-btn:hover {
+    background: linear-gradient(180deg, #ffad38, #df7809 55%, #ce5900);
+}
+.sync-btn:active, button.suggested-action:active {
+    background: #c85e08;
+    box-shadow: inset 0 2px 5px rgba(60, 20, 0, 0.3);
+}
+.sync-btn:disabled, button.suggested-action:disabled {
+    background: #55402f;
+    border-color: #78604c;
+    color: #c2b6aa;
+    box-shadow: none;
+}
+button:focus-visible, checkbutton:focus-visible, switch:focus-visible {
+    outline: 2px solid #ffbc71;
+    outline-offset: 3px;
+}
+.sync-progress trough {
+    min-height: 4px;
+    border-radius: 10px;
+    background: rgba(255, 215, 170, 0.13);
+}
+.sync-progress progress {
+    min-height: 4px;
+    border-radius: 10px;
+    background: linear-gradient(90deg, #df6b08, #ffbd63);
+}
+.watch-status { color: #b6a99f; font-size: 12px; }
+
+.dashboard .card {
+    background: linear-gradient(135deg, rgba(79, 68, 59, 0.48), rgba(42, 39, 36, 0.76));
+    border: 1px solid rgba(222, 195, 171, 0.26);
+    border-radius: 17px;
+    box-shadow: inset 0 1px rgba(255, 228, 203, 0.06), 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+.stat-card { padding: 17px 22px; }
+.stat-icon { color: #f4bb80; }
+.stat-value { font-size: 27px; font-weight: 800; color: #fffaf5; }
+.stat-caption { font-size: 13px; color: #c1b5aa; }
+.section-title { font-size: 21px; font-weight: 750; color: #fffaf5; }
+.panel { padding: 18px 22px; }
+.folder-row { padding: 14px 0; }
+.folder-name { font-size: 16px; font-weight: 700; color: #f8f3ef; }
+.folder-path { font-size: 12px; color: #bfb3a8; }
+.folder-icon { color: #d4cdc5; }
+.row-label, .target-row-label { font-size: 14px; color: #eee6df; }
+.row-sep { min-height: 1px; background-color: rgba(226, 204, 182, 0.16); }
+.target-title { font-size: 18px; font-weight: 750; color: #fffaf5; }
+.target-sub { font-size: 13px; color: #c6b9ac; }
+.target-details { padding: 17px 0; }
+.sync-controls {
+    padding: 14px 2px 0;
+    border-top: 1px solid rgba(226, 204, 182, 0.16);
+}
+.add-btn, .secondary-btn {
+    background: linear-gradient(180deg, rgba(123, 110, 97, 0.38), rgba(79, 70, 62, 0.42));
+    color: #f6f0ea;
+    border: 1px solid rgba(229, 209, 188, 0.32);
+    border-radius: 10px;
+    padding: 9px 13px;
+    box-shadow: inset 0 1px rgba(255, 238, 216, 0.08);
+    transition: box-shadow 180ms ease, background 180ms ease;
+}
+.add-btn:hover, .secondary-btn:hover {
+    background: rgba(151, 107, 64, 0.32);
+    border-color: rgba(255, 181, 102, 0.6);
+    box-shadow: 0 0 16px rgba(255, 141, 43, 0.1);
+}
+.add-btn label { font-size: 13px; }
+.settings-card { margin-top: 20px; }
+.expander-btn { padding: 17px 22px; border-radius: 16px; }
+.expander-btn label { font-size: 16px; font-weight: 700; color: #f4ece4; }
+.settings-body { padding: 0 22px 15px; }
+.settings-body .folder-row { padding: 14px 0; }
+.exclusion-select > button {
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(123, 110, 97, 0.3), rgba(79, 70, 62, 0.35));
+    border: 1px solid rgba(229, 209, 188, 0.32);
+}
+.exclusion-select > button:hover {
+    border-color: rgba(255, 181, 102, 0.6);
+    box-shadow: 0 0 14px rgba(255, 141, 43, 0.1);
+}
+checkbutton check {
+    border-radius: 6px;
+    border-color: #8b8177;
+    background: rgba(26, 24, 22, 0.6);
+    min-width: 20px;
+    min-height: 20px;
+}
+checkbutton check:checked {
+    background: linear-gradient(145deg, #ffa11c, #db6505);
+    border-color: #ffb34f;
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(255, 138, 16, 0.15);
+}
+switch:checked {
+    background: linear-gradient(90deg, #e67308, #ff9c20);
+    border-color: #ffb657;
+}
+switch slider { background: #fff8f0; }
+
+.recovery-folder {
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid rgba(224, 191, 160, 0.25);
+    background: linear-gradient(135deg, #39312b, #2a2622);
+}

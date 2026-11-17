@@ -328,12 +328,67 @@ fn webdav_backups_can_be_browsed_and_restored_with_unicode_paths() {
         files[0].path,
         Path::new("Documents/nested/ümlaut & spaces.txt")
     );
+    let inventory = cloudsave_core::discover_backup(&target).unwrap();
+    assert!(inventory.has_catalog);
+    assert_eq!(inventory.folders[0].namespace, "Documents");
+    let mapped = tmp.path().join("mapped");
+    fs::create_dir(&mapped).unwrap();
+    let locations = vec![cloudsave_core::RestoreLocation {
+        namespace: "Documents".into(),
+        destination: mapped.clone(),
+    }];
+    let mapped_report =
+        cloudsave_core::restore_mapped(&target, &inventory.files, &locations, |_| {}).unwrap();
+    assert_eq!(mapped_report.restored, 1);
+    assert!(mapped_report.errors.is_empty());
+    let mut recovered = Config {
+        folders: vec![mapped.clone()],
+        targets: vec![target.clone()],
+        settings: Settings::default(),
+    };
+    recovered
+        .settings
+        .folder_names
+        .insert(mapped.clone(), "Documents".into());
+    cloudsave_core::adopt_restored(
+        &target,
+        &mapped_report,
+        &locations,
+        &tmp.path().join("new.db"),
+    )
+    .unwrap();
+    let first_sync = sync(&recovered, &tmp.path().join("new.db")).unwrap();
+    assert_eq!(first_sync.uploaded, 0);
+    assert_eq!(first_sync.skipped, 1);
+    assert!(first_sync.errors.is_empty());
+    fs::write(
+        mapped.join("nested/ümlaut & spaces.txt"),
+        b"edited after recovery",
+    )
+    .unwrap();
+    cloudsave_core::adopt_restored(
+        &target,
+        &mapped_report,
+        &locations,
+        &tmp.path().join("new.db"),
+    )
+    .unwrap();
+    let changed = sync(&recovered, &tmp.path().join("new.db")).unwrap();
+    assert_eq!(changed.uploaded, 1);
+    assert!(changed.errors.is_empty());
+    assert_eq!(
+        fs::read(srv.join("base/Documents/nested/ümlaut & spaces.txt")).unwrap(),
+        b"edited after recovery"
+    );
+    // The earlier inventory becomes stale after an intentional edit; relist before
+    // exercising the independent manual-restore route below.
+    let files = list_backups(&target).unwrap();
     let output = tmp.path().join("restore");
     fs::create_dir(&output).unwrap();
     let report = restore_files(&target, &files, &output).unwrap();
     assert_eq!(report.restored, 1, "{:?}", report.errors);
     assert_eq!(
         fs::read(output.join(&files[0].path)).unwrap(),
-        b"roundtrip bytes\0\xff"
+        b"edited after recovery"
     );
 }

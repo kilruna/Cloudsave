@@ -49,7 +49,7 @@ TMPDIR="$PWD/work/ui-tmp" GSK_RENDERER=cairo xvfb-run -a \
   --output "$PWD/work/native-ui-results"
 ```
 
-The native mode adds three scenarios using GTK's actual fallback folder chooser:
+The native mode exercises GTK's actual fallback folder chooser:
 selection, cancellation, reselection, radio switching, window controls on all
 wizard pages, an explicit first sync, and adding a second endpoint. This uses
 widget actions plus `xdotool` to open/submit the chooser's location entry.
@@ -65,6 +65,36 @@ error. Outputs include JSON results, binary SHA-256, widget trees, screenshots,
 and stderr logs. The generated bridge library is ignored by Git.
 
 ## Coverage and remaining manual checks
+
+UI-32 verifies the dashboard's real statistics before and after a multi-target
+sync and after a file change. Native mode additionally resizes the actual window
+to 560 pixels and captures its stacked layout. Screenshots use the current X11
+geometry, including after resizes. The Rust test job runs the full native suite
+in an isolated network namespace and publishes `dashboard-test-results` even
+when checks fail. Statistics count tracked backup copies across all targets;
+they do not claim to measure total server disk usage. The timestamp card shows
+the last recorded file transfer, rather than a fabricated successful scan time.
+
+UI-33 verifies one card per endpoint, with the add action outside both cards and
+one explicitly global auto-sync switch. It tests a reachable local destination
+and a destination blocked by a file: connection results stay in the respective
+card, and each restore action loads only that card's endpoint. Screenshot
+capture consumes window-destruction events between app launches, so reused X11
+IDs cannot silently suppress later screenshots.
+
+UI-34 forces a desktop decoration layout containing an application icon and
+window buttons on both sides. It verifies a single brand mark, no duplicate
+decoration icon, and preserved button positions. UI-35 uses the actual native
+folder chooser for exclusions: outside-source paths are rejected and a selected
+folder with glob metacharacters is excluded literally in both backup targets.
+The portal variant remains a manual installed-Flatpak check.
+
+UI-36 checks discovery before the initial sync, a restart with pending recovery
+and Mirror selected, and whole-folder recovery to the original home locations.
+UI-37 exercises the real native chooser and cancellation for a separate output
+folder. UI-38 restores portable nested/empty source folders and verifies stable
+remote namespaces. UI-39 rejects a symlink destination, retries safely, retains
+conflicting local files and keeps automatic sync paused.
 
 | Finding | Fix and regression coverage |
 |---|---|
@@ -92,8 +122,10 @@ portal and Wayland window operations requested by the report.
 
 UI-24 prüft einen nicht verfügbaren Schlüsselbund (Fehler sichtbar, keine neue
 Klartextdatei/Config). UI-25 prüft Backup-/Spiegelungsmodus über einen Neustart und
-zwei Ziele. UI-26 prüft Ausschlussmuster und ungültige Eingaben. UI-27 prüft echte
-Dateiänderungen mit automatischem Transfer und Auto-Sync AUS. UI-28 verwendet die
+zwei Ziele. UI-26 prüft anklickbare Ausschlussgruppen, eigene Regeln mit Validierung,
+Abbrechen, Entfernen und Persistenz nach Neustart sowie den Erhalt vorhandener
+ausgeschlossener Sicherungen. UI-27 prüft echte Dateiänderungen mit automatischem
+Transfer, angezeigten Live-Sync-Zustand und Auto-Sync AUS. UI-28 verwendet die
 Wiederherstellungsansicht und den tatsächlichen GTK-Zielordnerdialog für Unicode-
 Dateien und prüft den Schutz vorhandener Dateien.
 
@@ -128,6 +160,13 @@ erneute Registrierung nach einem Watcher-Neustart, später Panel-Start,
 deaktiviertem Hintergrundbetrieb. Profil und Sicherungsdateien sind isolierte
 Testdaten. `results.json` protokolliert bestandene Prüfungen, Stderr-Logs und
 Config-Snapshots ergänzen die Belege.
+
+Die Suite prüft außerdem die orange/weißen ARGB-Pixel des gemeinsamen Renderers,
+das Menü bei normalem Klick, echte aktive Sync-Aufträge und die Job-Historie.
+Ein echter Download von einer kontrollierten FIFO hält den Worker an, sodass die
+Downloadphase über D-Bus überprüft werden kann; anschließend werden echte Bytes
+geschrieben und das wiederhergestellte Ergebnis geprüft. Keine Übertragung wird
+dabei durch eine Erfolgssimulation ersetzt.
 
 Diese Suite prüft das D-Bus-Protokoll und die native GTK-Lebensdauer. Darstellung
 und Klickverhalten im echten Plasma-/GNOME-Panel sowie die installierte Flatpak

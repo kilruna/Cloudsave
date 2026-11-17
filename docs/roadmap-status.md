@@ -5,9 +5,11 @@ Die Aufgaben werden getrennt getestet und als einzelne PRs integriert.
 - [x] Zugangsdaten im System-Schlüsselbund (Secret Service, GNOME Keyring/KWallet); bestehende Passwortdateien werden erst nach erfolgreicher Übernahme entfernt. Einrichtung zeigt Fehler an und speichert im Hintergrund.
 - [x] Wählbarer Backup-Modus ohne Löschweitergabe. Neue Profile starten im Backup-Modus; vorhandene Profile behalten die bisherige Spiegelung. Der Modus ist im Dashboard umstellbar.
 - [x] Abbruchsichere Uploads: lokale Tempdatei mit Größenprüfung/fsync/atomarem Ersetzen; WebDAV mit exklusivem temporärem PUT und MOVE. Fehlgeschlagene Übertragungen ersetzen keine gültige Sicherung.
-- [x] Ausschlussmuster: ein Glob pro Zeile im Dashboard. Namen ohne / gelten für jede Pfadkomponente; Pfade mit / relativ zur Quelle. Ausgeschlossene Bestandsdateien werden auch bei Spiegelung nicht gelöscht.
+- [x] Ausschlussmuster: anklickbare Standardgruppen, eigener Musterdialog und native Ordnerauswahl. Namen ohne / gelten für jede Pfadkomponente; Pfade mit / relativ zur Quelle. Ausgeschlossene Bestandsdateien werden auch bei Spiegelung nicht gelöscht.
 - [x] Ereignisbasierte Änderungserkennung: notify/inotify im Worker, drei Sekunden Ruhezeit, bestehendes Intervall als Scan-Fallback. Auto-Sync AUS bleibt wirksam; Quellen und Ausschlüsse werden beim Ändern neu registriert.
 - [x] Sicherungen durchsuchen und ausgewählte Dateien wiederherstellen: lokale Ziele und WebDAV, Dateiauswahl im Dashboard, Zielordner per Dialog, atomarer Download ohne Überschreiben bestehender Dateien.
+- [x] Ganze Ordner im Einrichtungsassistenten wiederherstellen: Endpunktprüfung vor dem ersten Upload, bisherige Home-Orte oder separater Ausgabeordner, fortsetzbar nach Neustart. Neue Sicherungen speichern eine portable Ordnerzuordnung; alte erhalten bestätigbare Vorschläge. Fehler/Konflikte lassen Auto-Sync pausiert.
+- [x] Orange Wolke im Tray mit aktiven Aufträgen, Upload-/Downloadphase und den letzten acht Jobs der laufenden Sitzung. Öffnen und Beenden bleiben im Menü erreichbar.
 
 Für den Schlüsselbund muss ein Secret-Service-Anbieter in der Desktopsitzung laufen
 und gegebenenfalls entsperrt werden. Cloudsave schreibt keine neuen Passwortdateien.

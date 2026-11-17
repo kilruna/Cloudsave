@@ -1,5 +1,9 @@
+mod brand;
 mod dashboard;
+mod exclusion_picker;
+mod jobs;
 mod onboarding;
+mod recovery;
 mod restore;
 mod tray;
 
@@ -8,127 +12,51 @@ use gtk::glib;
 use gtk4 as gtk;
 use libadwaita as adw;
 
-const CSS: &str = r#"
-@define-color accent_color #9D7CFF;
-@define-color accent_bg_color #9D7CFF;
-@define-color accent_fg_color #FFFFFF;
+const CSS: &str = include_str!("style.css");
 
-window, .window-bg {
-    background: linear-gradient(150deg, #3E7BDB 0%, #1E56B0 38%, #24338D 100%);
-}
-
-.main-card {
-    background:
-        radial-gradient(circle at 78% -12%, rgba(96, 165, 250, 0.40), rgba(59, 130, 246, 0.12) 42%, transparent 62%),
-        #151E3C;
-}
-
-.app-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: #FFFFFF;
+fn without_app_icon(layout: &str) -> String {
+    layout
+        .split(':')
+        .map(|side| {
+            side.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty() && !matches!(*item, "icon" | "menu" | "appmenu"))
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
-.sync-btn {
-    background-color: #9D7CFF;
-    color: #FFFFFF;
-    font-weight: 600;
-    border-radius: 999px;
-    padding: 8px 18px;
+fn follow_window_controls(header: &adw::HeaderBar) {
+    if let Some(settings) = gtk::Settings::default() {
+        let layout = settings
+            .gtk_decoration_layout()
+            .unwrap_or_else(|| ":minimize,maximize,close".into());
+        header.set_decoration_layout(Some(&without_app_icon(&layout)));
+        let header = header.downgrade();
+        settings.connect_gtk_decoration_layout_notify(move |settings| {
+            if let Some(header) = header.upgrade() {
+                let layout = settings
+                    .gtk_decoration_layout()
+                    .unwrap_or_else(|| ":minimize,maximize,close".into());
+                header.set_decoration_layout(Some(&without_app_icon(&layout)));
+            }
+        });
+    }
 }
-.sync-btn:hover {
-    background-color: #AE92FF;
-}
-
-.sync-title {
-    font-size: 30px;
-    font-weight: 700;
-    color: #FFFFFF;
-}
-.sync-sub {
-    font-size: 14px;
-    color: #A9B1CE;
-}
-
-.sync-progress trough {
-    min-height: 10px;
-    background-color: rgba(255, 255, 255, 0.16);
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    border-radius: 999px;
-}
-.sync-progress trough progress {
-    min-height: 10px;
-    background: linear-gradient(90deg, #FFFFFF, #C7C9FE);
-    border-radius: 999px;
-}
-
-.section-title {
-    font-size: 18px;
-    font-weight: 700;
-    color: #FFFFFF;
-}
-
-.card {
-    background-color: rgba(255, 255, 255, 0.055);
-    border-radius: 14px;
-}
-.target-card {
-    padding: 22px;
-}
-
-.folder-row {
-    padding: 13px 16px;
-}
-.row-label {
-    font-size: 15px;
-    color: #F2F4FF;
-}
-.row-sep {
-    min-height: 1px;
-    background-color: rgba(255, 255, 255, 0.08);
-}
-
-.add-btn {
-    background-color: #2A2D3A;
-    color: #FFFFFF;
-    border-radius: 10px;
-    padding: 9px 14px;
-}
-.add-btn:hover {
-    background-color: #353A4A;
-}
-.add-btn label {
-    font-size: 14px;
-}
-
-.target-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: #FFFFFF;
-}
-.target-sub {
-    font-size: 14px;
-    color: #9AA3C0;
-}
-.target-row-label {
-    font-size: 15px;
-    color: #F2F4FF;
-}
-
-.expander-btn {
-    padding: 14px 16px;
-}
-.expander-btn label {
-    font-size: 15px;
-    font-weight: 600;
-    color: #F2F4FF;
-}
-"#;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Icon {
     Cloud,
     Folder,
+    File,
+    Storage,
+    Clock,
+    Server,
+    Check,
+    Warning,
+    Refresh,
 }
 
 fn rounded_rect(cr: &gtk::cairo::Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
@@ -151,53 +79,143 @@ fn draw_cloud_at(
 ) {
     let (red, green, blue, alpha) = color;
     cr.set_source_rgba(red, green, blue, alpha);
-    for (dx, dy, r) in [
-        (-18.0, 6.0, 13.0),
-        (-2.0, -4.0, 17.0),
-        (15.0, 4.0, 14.0),
-        (4.0, 10.0, 15.0),
-    ] {
-        cr.arc(
-            cx + dx * scale,
-            cy + dy * scale,
-            r * scale,
-            0.0,
-            std::f64::consts::TAU,
-        );
-    }
-    rounded_rect(
-        cr,
-        cx - 26.0 * scale,
-        cy + 4.0 * scale,
-        52.0 * scale,
-        14.0 * scale,
-        7.0 * scale,
+    cr.set_line_width(4.0 * scale);
+    cr.set_line_cap(gtk::cairo::LineCap::Round);
+    cr.move_to(cx - 18.0 * scale, cy + 20.0 * scale);
+    cr.curve_to(
+        cx - 39.0 * scale,
+        cy + 19.0 * scale,
+        cx - 36.0 * scale,
+        cy - 6.0 * scale,
+        cx - 18.0 * scale,
+        cy - 5.0 * scale,
     );
-    let _ = cr.fill();
+    cr.curve_to(
+        cx - 17.0 * scale,
+        cy - 28.0 * scale,
+        cx + 16.0 * scale,
+        cy - 27.0 * scale,
+        cx + 18.0 * scale,
+        cy - 5.0 * scale,
+    );
+    cr.curve_to(
+        cx + 39.0 * scale,
+        cy - 7.0 * scale,
+        cx + 39.0 * scale,
+        cy + 20.0 * scale,
+        cx + 18.0 * scale,
+        cy + 20.0 * scale,
+    );
+    cr.close_path();
+    let _ = cr.stroke();
 }
 
 fn draw_folder(cr: &gtk::cairo::Context, w: f64, h: f64, red: f64, green: f64, blue: f64) {
     let s = w.min(h) / 64.0;
     cr.set_source_rgba(red, green, blue, 1.0);
-    rounded_rect(cr, 6.0 * s, 12.0 * s, 24.0 * s, 12.0 * s, 4.0 * s);
-    let _ = cr.fill();
-    rounded_rect(cr, 6.0 * s, 20.0 * s, 52.0 * s, 32.0 * s, 5.0 * s);
-    let _ = cr.fill();
+    cr.set_line_width(3.5 * s);
+    cr.set_line_join(gtk::cairo::LineJoin::Round);
+    cr.move_to(7.0 * s, 23.0 * s);
+    cr.line_to(7.0 * s, 15.0 * s);
+    cr.line_to(25.0 * s, 15.0 * s);
+    cr.line_to(32.0 * s, 23.0 * s);
+    let _ = cr.stroke();
+    rounded_rect(cr, 7.0 * s, 23.0 * s, 50.0 * s, 30.0 * s, 4.0 * s);
+    let _ = cr.stroke();
 }
 
 pub(crate) fn icon(kind: Icon, size: i32, red: f64, green: f64, blue: f64) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::new();
     area.set_size_request(size, size);
     area.set_valign(gtk::Align::Center);
+    area.set_can_target(false);
+    set_icon(&area, kind, red, green, blue);
+    area
+}
+
+pub(crate) fn set_icon(area: &gtk::DrawingArea, kind: Icon, red: f64, green: f64, blue: f64) {
     area.set_draw_func(move |_, cr, w, h| {
         let w = f64::from(w);
         let h = f64::from(h);
         match kind {
             Icon::Cloud => draw_cloud_at(cr, w / 2.0, h * 0.42, w / 64.0, (red, green, blue, 1.0)),
             Icon::Folder => draw_folder(cr, w, h, red, green, blue),
+            _ => {
+                cr.scale(w / 64.0, h / 64.0);
+                cr.set_source_rgb(red, green, blue);
+                cr.set_line_width(3.5);
+                cr.set_line_cap(gtk::cairo::LineCap::Round);
+                cr.set_line_join(gtk::cairo::LineJoin::Round);
+                match kind {
+                    Icon::File => {
+                        cr.move_to(18.0, 8.0);
+                        cr.line_to(38.0, 8.0);
+                        cr.line_to(51.0, 22.0);
+                        cr.line_to(51.0, 56.0);
+                        cr.line_to(15.0, 56.0);
+                        cr.line_to(15.0, 8.0);
+                        cr.close_path();
+                        cr.move_to(37.0, 8.0);
+                        cr.line_to(37.0, 23.0);
+                        cr.line_to(51.0, 23.0);
+                    }
+                    Icon::Storage => {
+                        cr.move_to(10.0, 16.0);
+                        cr.curve_to(10.0, 5.0, 54.0, 5.0, 54.0, 16.0);
+                        cr.curve_to(54.0, 27.0, 10.0, 27.0, 10.0, 16.0);
+                        cr.line_to(10.0, 47.0);
+                        cr.curve_to(10.0, 59.0, 54.0, 59.0, 54.0, 47.0);
+                        cr.line_to(54.0, 16.0);
+                        for y in [31.0, 41.0] {
+                            cr.move_to(10.0, y);
+                            cr.curve_to(10.0, y + 11.0, 54.0, y + 11.0, 54.0, y);
+                        }
+                    }
+                    Icon::Clock | Icon::Check | Icon::Warning => {
+                        cr.arc(32.0, 32.0, 24.0, 0.0, std::f64::consts::TAU);
+                        match kind {
+                            Icon::Clock => {
+                                cr.move_to(32.0, 16.0);
+                                cr.line_to(32.0, 32.0);
+                                cr.line_to(44.0, 39.0);
+                            }
+                            Icon::Check => {
+                                cr.move_to(19.0, 32.0);
+                                cr.line_to(28.0, 41.0);
+                                cr.line_to(45.0, 23.0);
+                            }
+                            _ => {
+                                cr.move_to(32.0, 18.0);
+                                cr.line_to(32.0, 34.0);
+                                cr.move_to(32.0, 45.0);
+                                cr.line_to(32.0, 46.0);
+                            }
+                        }
+                    }
+                    Icon::Server => {
+                        rounded_rect(cr, 7.0, 11.0, 50.0, 42.0, 6.0);
+                        cr.move_to(7.0, 32.0);
+                        cr.line_to(57.0, 32.0);
+                        for y in [22.0, 43.0] {
+                            cr.move_to(16.0, y);
+                            cr.line_to(18.0, y);
+                            cr.move_to(27.0, y);
+                            cr.line_to(47.0, y);
+                        }
+                    }
+                    Icon::Refresh => {
+                        cr.arc(32.0, 32.0, 21.0, 0.6, 5.8);
+                        cr.move_to(52.0, 12.0);
+                        cr.line_to(52.0, 25.0);
+                        cr.line_to(39.0, 25.0);
+                    }
+                    _ => {}
+                }
+                let _ = cr.stroke();
+            }
         }
     });
-    area
+    area.queue_draw();
 }
 
 fn main() -> glib::ExitCode {
@@ -261,11 +279,26 @@ fn open_window(app: &adw::Application, background: bool) {
 fn build_ui(app: &adw::Application, background: bool) {
     let window = gtk::ApplicationWindow::new(app);
     window.set_title(Some("Cloudsave"));
-    window.set_default_size(1120, 760);
+    window.set_default_size(1180, 820);
+    window.add_css_class("cloudsave-window");
     window.set_decorated(true);
     let header = adw::HeaderBar::new();
-    header.add_css_class("flat");
-    header.set_title_widget(Some(&adw::WindowTitle::new("Cloudsave", "")));
+    follow_window_controls(&header);
+    header.add_css_class("cloudsave-header");
+    let brand = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+    let mark = gtk::DrawingArea::new();
+    mark.set_size_request(44, 44);
+    mark.set_can_target(false);
+    mark.set_draw_func(|_, cr, width, height| {
+        brand::paint(cr, f64::from(width), f64::from(height))
+    });
+    mark.add_css_class("brand-mark");
+    brand.append(&mark);
+    let name = gtk::Label::new(Some("Cloudsave"));
+    name.add_css_class("app-title");
+    brand.append(&name);
+    header.pack_start(&brand);
+    header.set_title_widget(Some(&gtk::Box::new(gtk::Orientation::Horizontal, 0)));
     window.set_titlebar(Some(&header));
 
     {
@@ -293,6 +326,7 @@ fn build_ui(app: &adw::Application, background: bool) {
     card.add_css_class("main-card");
     card.set_halign(gtk::Align::Fill);
     card.set_valign(gtk::Align::Fill);
+    card.set_vexpand(true);
     root.append(&card);
 
     let nav = adw::NavigationView::new();
@@ -301,6 +335,9 @@ fn build_ui(app: &adw::Application, background: bool) {
     card.append(&nav);
 
     match cloudsave_core::Config::load(&cloudsave_core::Config::default_path()) {
+        Ok(config) if config.settings.pending_recovery.is_some() => {
+            recovery::resume(window.upcast_ref(), &nav, &config);
+        }
         Ok(config) => {
             let page = dashboard::build(
                 window.upcast_ref(),
@@ -317,5 +354,22 @@ fn build_ui(app: &adw::Application, background: bool) {
 
     if !background {
         window.present();
+    }
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::without_app_icon;
+
+    #[test]
+    fn native_app_icons_are_removed_without_reordering_window_controls() {
+        for (layout, expected) in [
+            ("icon:minimize,maximize,close", ":minimize,maximize,close"),
+            ("menu,close:minimize,maximize", "close:minimize,maximize"),
+            ("close,minimize,maximize:", "close,minimize,maximize:"),
+            ("icon,menu,appmenu:close", ":close"),
+        ] {
+            assert_eq!(without_app_icon(layout), expected);
+        }
     }
 }
