@@ -687,8 +687,6 @@ def endpoint_removal():
         open_removal('Ziel 1')
         assert eventually(lambda: any('Vorhandene Sicherungen am Ziel bleiben erhalten.' in label
                                       for label in app.labels()))
-        time.sleep(.3)
-        evidence.extend(app.snapshot('confirmation'))
         app.click('Abbrechen')
         assert len(tomllib.loads(app.cfg.read_text())['targets']) == 2
         open_removal('Ziel 1')
