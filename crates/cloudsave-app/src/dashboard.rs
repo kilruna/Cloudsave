@@ -62,9 +62,8 @@ fn stat_card(symbol: Icon, caption: &str) -> (gtk::Box, gtk::Label) {
     (card, value)
 }
 
-fn update_stats(ui: &SyncUi, state_path: &Path) {
-    let values = State::open(state_path)
-        .and_then(|state| Ok((state.count()?, state.total_size()?, state.last_synced()?)));
+fn update_stats(ui: &SyncUi, state_path: &Path, targets: &[Target]) {
+    let values = State::open(state_path).and_then(|state| state.stats_for_targets(targets));
     match values {
         Ok((count, size, last)) => {
             ui.files.set_text(&count.to_string());
@@ -114,11 +113,15 @@ fn endpoint_card(
     target: &Target,
     index: usize,
     count: usize,
+    config: &Rc<RefCell<Config>>,
+    sync_btn: &gtk::Button,
 ) -> gtk::Box {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("card");
     card.add_css_class("panel");
     card.add_css_class("endpoint-card");
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.set_margin_bottom(16);
     let heading = gtk::Label::new(Some(&if count == 1 {
         "Ziel".into()
     } else {
@@ -126,8 +129,31 @@ fn endpoint_card(
     }));
     heading.add_css_class("section-title");
     heading.set_xalign(0.0);
-    heading.set_margin_bottom(16);
-    card.append(&heading);
+    heading.set_hexpand(true);
+    header.append(&heading);
+    let label = format!("{} entfernen", cloudsave_core::target_label(target));
+    let remove = remove_button(&label);
+    remove.set_tooltip_text(Some("Endpunkt entfernen · verfügbar zwischen Aufträgen"));
+    sync_btn
+        .bind_property("sensitive", &remove, "sensitive")
+        .sync_create()
+        .build();
+    {
+        let window = window.downgrade();
+        let nav = nav.downgrade();
+        let config = config.clone();
+        let target = target.clone();
+        let sync_btn = sync_btn.downgrade();
+        remove.connect_clicked(move |_| {
+            if let (Some(window), Some(nav), Some(sync_btn)) =
+                (window.upgrade(), nav.upgrade(), sync_btn.upgrade())
+            {
+                confirm_target_removal(&window, &nav, &config, &target, &sync_btn);
+            }
+        });
+    }
+    header.append(&remove);
+    card.append(&header);
     card.append(&separator());
 
     let (name, description) = match target {
@@ -242,6 +268,68 @@ fn endpoint_card(
         });
     }
     card
+}
+
+fn remove_button(label: &str) -> gtk::Button {
+    let remove = gtk::Button::new();
+    remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
+    remove.add_css_class("folder-remove");
+    remove.set_valign(gtk::Align::Center);
+    remove.set_tooltip_text(Some(label));
+    remove.update_property(&[gtk::accessible::Property::Label(label)]);
+    remove
+}
+
+fn confirm_target_removal(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    config: &Rc<RefCell<Config>>,
+    target: &Target,
+    sync_btn: &gtk::Button,
+) {
+    let detail = format!(
+        "{}\n\nCloudsave beendet die Sicherung an diesem Ziel. Vorhandene Sicherungen am Ziel bleiben erhalten.",
+        cloudsave_core::target_label(target)
+    );
+    let dialog = adw::AlertDialog::new(Some("Endpunkt entfernen?"), Some(&detail));
+    dialog.add_responses(&[("cancel", "Abbrechen"), ("remove", "Endpunkt entfernen")]);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+    let window_ref = window.downgrade();
+    let nav = nav.downgrade();
+    let config = config.clone();
+    let target = target.clone();
+    let sync_btn = sync_btn.downgrade();
+    dialog.connect_response(Some("remove"), move |_, _| {
+        let (Some(window), Some(nav), Some(sync_btn)) =
+            (window_ref.upgrade(), nav.upgrade(), sync_btn.upgrade())
+        else {
+            return;
+        };
+        let message = if !sync_btn.is_sensitive() || crate::jobs::snapshot().active.is_some() {
+            "Ein Auftrag läuft. Entferne den Endpunkt, sobald er beendet ist.".into()
+        } else {
+            let mut updated = config.borrow().clone();
+            updated.remove_target(&target);
+            match updated.save(&Config::default_path()) {
+                Ok(()) => {
+                    *config.borrow_mut() = updated.clone();
+                    crate::jobs::target_removed(&target);
+                    crate::onboarding::show_dashboard(&window, &nav, &updated, false);
+                    return;
+                }
+                Err(error) => error.to_string(),
+            }
+        };
+        let failure = adw::AlertDialog::new(
+            Some("Endpunkt konnte nicht entfernt werden"),
+            Some(&message),
+        );
+        failure.add_response("close", "OK");
+        failure.present(Some(&window));
+    });
+    dialog.present(Some(window));
 }
 
 pub fn build(
@@ -605,7 +693,15 @@ pub fn build(
         right.append(&empty);
     }
     for (index, target) in targets.iter().enumerate() {
-        right.append(&endpoint_card(window, nav, target, index, targets.len()));
+        right.append(&endpoint_card(
+            window,
+            nav,
+            target,
+            index,
+            targets.len(),
+            &config,
+            &sync_btn,
+        ));
     }
 
     let add_target_btn = gtk::Button::new();
@@ -692,8 +788,8 @@ pub fn build(
         size: size_value,
         last_sync: time_value,
     };
-    ui.sub.set_text(&status_sub_text(&state_path));
-    update_stats(&ui, &state_path);
+    ui.sub.set_text(&status_sub_text(&state_path, &targets));
+    update_stats(&ui, &state_path, &targets);
     if config.borrow().targets.is_empty() {
         set_status(&ui, "error");
         ui.title.set_text("Endpunkt einrichten");
@@ -759,7 +855,7 @@ pub fn build(
                 return glib::ControlFlow::Break;
             }
             if stats_updated.elapsed() >= Duration::from_secs(30) {
-                update_stats(&ui, &state_path);
+                update_stats(&ui, &state_path, &config.borrow().targets);
                 stats_updated = Instant::now();
             }
             let cfg = config.borrow();
@@ -976,13 +1072,8 @@ impl FolderList {
         text.append(&location);
         row.append(&text);
 
-        let remove = gtk::Button::new();
-        remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
-        remove.add_css_class("folder-remove");
-        remove.set_valign(gtk::Align::Center);
         let remove_label = format!("{name} entfernen");
-        remove.set_tooltip_text(Some(&remove_label));
-        remove.update_property(&[gtk::accessible::Property::Label(&remove_label)]);
+        let remove = remove_button(&remove_label);
         row.append(&remove);
 
         self.rows
@@ -1039,12 +1130,12 @@ impl FolderList {
     }
 }
 
-fn status_sub_text(state_path: &Path) -> String {
-    match State::open(state_path) {
-        Ok(state) => format!(
+fn status_sub_text(state_path: &Path, targets: &[Target]) -> String {
+    match State::open(state_path).and_then(|state| state.stats_for_targets(targets)) {
+        Ok((count, _, last)) => format!(
             "{} Dateien gesichert · letzter Sync {}",
-            state.count().unwrap_or(0),
-            fmt_rel(state.last_synced().unwrap_or(None))
+            count,
+            fmt_rel(last)
         ),
         Err(_) => "Noch kein Sync durchgeführt".to_string(),
     }
@@ -1094,7 +1185,8 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
                     )),
                 }
             }
-            update_stats(&ui, &state_path);
+            let config = config.borrow();
+            update_stats(&ui, &state_path, &config.targets);
             if report.cancelled {
                 set_status(&ui, "ready");
                 ui.title.set_text("Sync abgebrochen");
@@ -1103,7 +1195,8 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
             } else if report.errors.is_empty() {
                 set_status(&ui, "success");
                 ui.title.set_text("Alles synchronisiert");
-                ui.sub.set_text(&status_sub_text(&state_path));
+                ui.sub
+                    .set_text(&status_sub_text(&state_path, &config.targets));
                 ui.progress.set_fraction(1.0);
             } else {
                 set_status(&ui, "error");
@@ -1111,7 +1204,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
                     .set_text(&format!("Sync mit {} Fehler(n)", report.errors.len()));
                 ui.sub.set_text(&format!(
                     "{}\n{}\nMit „Jetzt synchronisieren“ erneut versuchen.",
-                    status_sub_text(&state_path),
+                    status_sub_text(&state_path, &config.targets),
                     report.errors.join("\n")
                 ));
                 ui.progress.set_fraction(0.0);
@@ -1122,7 +1215,7 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         Ok(Err(e)) => {
             ui.control.borrow_mut().take();
             set_status(&ui, "error");
-            update_stats(&ui, &state_path);
+            update_stats(&ui, &state_path, &config.borrow().targets);
             ui.title.set_text("Sync fehlgeschlagen");
             ui.sub.set_text(&e);
             ui.progress.set_fraction(0.0);

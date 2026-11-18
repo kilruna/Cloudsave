@@ -625,7 +625,8 @@ def endpoint_cards():
     targets[1].write_text('this file deliberately blocks the second endpoint')
     def card_nodes(title):
         heading=ui.find('GtkLabel',title)
-        card=ui.nodes[heading['parent']]
+        header=ui.nodes[heading['parent']]
+        card=ui.nodes[header['parent']]
         return ui.descendants(card)
     def click_in_card(title,label):
         node=next(n for n in card_nodes(title) if n['type']=='GtkButton' and n['label']==label)
@@ -657,6 +658,63 @@ def endpoint_cards():
                f'Separate cards={separate}; global auto={global_auto and enabled and paused}; tests isolated={first_ok and second_error and first_still_ok}; restore isolated={second_restore and first_restore and found}',
                'One card per endpoint; add outside; global auto is explicit; each card tests and restores only its own target',ui.snapshot('scoped-restore'))
     finally:ui.stop()
+
+
+def endpoint_removal():
+    app = UI('endpoint-removal')
+    source = app.root/'Dokumente'
+    source.mkdir()
+    file = source/'Probe.txt'
+    file.write_text('first backup')
+    targets = [app.root/'backup-one', app.root/'backup-two']
+    app.write_config([source], targets)
+
+    def open_removal(title):
+        heading = app.find('GtkLabel', title)
+        header = app.nodes[heading['parent']]
+        button = next(node for node in app.descendants(header) if node['type'] == 'GtkButton')
+        app.command('click', button['id'])
+
+    try:
+        app.launch()
+        run('xdotool', 'windowsize', str(app.xid), '1180', '940')
+        time.sleep(.4)
+        app.click('Jetzt synchronisieren')
+        assert app.idle()
+        copies = [target/'Dokumente/Probe.txt' for target in targets]
+        assert all(copy.read_text() == 'first backup' for copy in copies)
+        evidence = app.snapshot('buttons')
+        open_removal('Ziel 1')
+        assert eventually(lambda: any('Vorhandene Sicherungen am Ziel bleiben erhalten.' in label
+                                      for label in app.labels()))
+        time.sleep(.3)
+        evidence.extend(app.snapshot('confirmation'))
+        app.click('Abbrechen')
+        assert len(tomllib.loads(app.cfg.read_text())['targets']) == 2
+        open_removal('Ziel 1')
+        app.click('Endpunkt entfernen')
+        assert eventually(lambda: any('1 Dateien gesichert' in label for label in app.labels()))
+        assert tomllib.loads(app.cfg.read_text())['targets'] == [{'type': 'local', 'path': str(targets[1])}]
+
+        app.stop()
+        app.launch()
+        app.set_active('GtkSwitch', True)
+        assert eventually(lambda: any('Live-Sync aktiv' in label for label in app.labels()))
+        file.write_text('second backup')
+        assert eventually(lambda: copies[1].read_text() == 'second backup', 12)
+        assert app.idle()
+        assert [copy.read_text() for copy in copies] == ['first backup', 'second backup']
+        open_removal('Ziel')
+        app.click('Endpunkt entfernen')
+        assert eventually(lambda: 'Kein Endpunkt konfiguriert' in app.labels())
+        assert not app.find('GtkButton', 'Jetzt synchronisieren')['sensitive']
+        assert not tomllib.loads(app.cfg.read_text())['targets']
+        assert all(copy.is_file() for copy in copies)
+        record('UI-41', 'Remove an endpoint without deleting its backups', True,
+               'Cancel keeps both targets; after restart live sync updates only the remaining target',
+               'Removing the final endpoint disables sync and preserves both backups', evidence)
+    finally:
+        app.stop()
 
 
 
@@ -895,6 +953,7 @@ def main():
         exclusion_settings()
         automatic_changes()
         folder_removal()
+        endpoint_removal()
         if BINARY:restore_ui()
         if BINARY:native_picker()
         if BINARY:native_header_layout()

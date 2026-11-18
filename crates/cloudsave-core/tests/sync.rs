@@ -556,6 +556,15 @@ fn explicit_live_removal_survives_restart_and_retries_only_the_failed_target() {
     config.remove_folder(&source).unwrap();
     config.save(&config_path).unwrap();
 
+    let mut detached = config.clone();
+    detached.remove_target(&config.targets[0]);
+    assert_eq!(
+        detached.settings.pending_folder_removals[0].targets,
+        [config.targets[1].clone()]
+    );
+    detached.remove_target(&config.targets[1]);
+    assert!(detached.settings.pending_folder_removals.is_empty());
+
     let mut config = Config::load(&config_path).unwrap();
     let report = sync(&config, &state).unwrap();
     assert!(!report.errors.is_empty());

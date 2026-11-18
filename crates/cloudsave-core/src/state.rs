@@ -1,8 +1,9 @@
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::Result;
+use crate::{Result, Target};
 
 pub struct State {
     conn: Connection,
@@ -198,6 +199,27 @@ impl State {
             .conn
             .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         Ok(n)
+    }
+
+    /// Report copies at the currently configured targets without discarding tracked backups.
+    pub fn stats_for_targets(&self, targets: &[Target]) -> Result<(i64, i64, Option<i64>)> {
+        let mut query = self.conn.prepare(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0), MAX(synced_at) FROM files WHERE path GLOB ?1",
+        )?;
+        let mut stats = (0, 0, None);
+        let mut seen = HashSet::new();
+        for target in targets {
+            let pattern = format!("{}::*", crate::engine::target_prefix(target)?);
+            if !seen.insert(pattern.clone()) {
+                continue;
+            }
+            let (count, size, last): (i64, i64, Option<i64>) =
+                query.query_row([pattern], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            stats.0 += count;
+            stats.1 += size;
+            stats.2 = stats.2.max(last);
+        }
+        Ok(stats)
     }
 
     pub fn total_size(&self) -> Result<i64> {

@@ -244,6 +244,12 @@ pub fn set_auto_sync(enabled: bool) {
     state().auto_sync_paused = !enabled;
 }
 
+pub fn target_removed(target: &Target) {
+    let mut state = state();
+    state.failed_restores.retain(|entry| entry != target);
+    state.last_sync_succeeded = None;
+}
+
 enum Outcome<'a> {
     Sync(bool),
     Restore(&'a Target, bool),
