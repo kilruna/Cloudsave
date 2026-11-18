@@ -131,6 +131,16 @@ impl Default for Settings {
 }
 
 impl Config {
+    pub fn has_sync_work(&self) -> bool {
+        !self.folders.is_empty()
+            || self.settings.pending_folder_removals.iter().any(|removal| {
+                removal
+                    .targets
+                    .iter()
+                    .any(|target| self.targets.contains(target))
+            })
+    }
+
     pub fn remove_target(&mut self, target: &Target) {
         self.targets.retain(|entry| entry != target);
         for removal in &mut self.settings.pending_folder_removals {

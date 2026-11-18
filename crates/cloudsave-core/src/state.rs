@@ -109,7 +109,41 @@ impl State {
             )",
             [],
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS successful_syncs (
+                targets TEXT PRIMARY KEY,
+                completed_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
         Ok(State { conn })
+    }
+
+    pub fn last_successful_sync(&self, targets: &[Target]) -> Result<Option<i64>> {
+        let value = self.conn.query_row(
+            "SELECT MAX(completed_at) FROM successful_syncs WHERE targets = ?1",
+            [Self::target_set(targets)?],
+            |row| row.get(0),
+        )?;
+        Ok(value)
+    }
+
+    pub(crate) fn record_successful_sync(&self, targets: &[Target]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO successful_syncs (targets, completed_at) VALUES (?1, ?2)",
+            params![Self::target_set(targets)?, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    fn target_set(targets: &[Target]) -> Result<String> {
+        let mut keys = targets
+            .iter()
+            .map(crate::engine::target_prefix)
+            .collect::<Result<Vec<_>>>()?;
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(keys.join(":"))
     }
 
     pub fn get(&self, path: &str) -> Result<Option<FileEntry>> {
@@ -135,6 +169,14 @@ impl State {
             "INSERT OR REPLACE INTO files (path, size, mtime, hash, synced_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![path, size, mtime, hash, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn update_mtime(&self, path: &str, mtime: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE files SET mtime = ?2 WHERE path = ?1",
+            params![path, mtime],
         )?;
         Ok(())
     }

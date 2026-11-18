@@ -382,6 +382,9 @@ pub fn sync(
     });
     let detail = match &result {
         Ok(report) if report.cancelled => format!("Abgebrochen · {} hochgeladen", report.uploaded),
+        Ok(report) if !report.attempted && report.errors.is_empty() => {
+            "Keine Ordner ausgewählt".into()
+        }
         Ok(report) => format!(
             "{} hochgeladen · {} gelöscht · {} unverändert · {} Fehler",
             report.uploaded,
@@ -395,7 +398,7 @@ pub fn sync(
         detail,
         match &result {
             Ok(report) if !report.errors.is_empty() => Some(Outcome::Sync(false)),
-            Ok(report) if report.cancelled => None,
+            Ok(report) if report.cancelled || !report.attempted => None,
             Ok(_) => Some(Outcome::Sync(true)),
             Err(_) => Some(Outcome::Sync(false)),
         },
