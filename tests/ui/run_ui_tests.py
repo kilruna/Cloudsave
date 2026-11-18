@@ -585,7 +585,13 @@ def backup_mode():
 def open_exclusions(ui):
     menu=ui.find('GtkMenuButton')
     button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
-    ui.command('click',button['id']);time.sleep(.25)
+    ui.command('focus',button['id'])
+    time.sleep(.3)
+    menu=ui.find('GtkMenuButton')
+    button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
+    ui.command('click',button['id'])
+    assert eventually(lambda:any(node['type']=='GtkButton' and node['mapped']
+                                 and node['label']=='Ordner auswählen …' for node in ui.tree()))
 
 
 def exclusion_settings():
