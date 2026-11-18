@@ -664,7 +664,7 @@ def restore_ui():
         ui.command('text',search['id'],'save')
         assert eventually(lambda: 'save.txt' in ui.labels() and 'ümlaut.txt' not in ui.labels())
         ui.set_active('GtkCheckButton',True,'save.txt')
-        assert any('2 ausgewählt' in label for label in ui.labels())
+        assert any('2 ausgewählt (1 außerhalb der Suche)' in label for label in ui.labels())
         output=ui.root/'restore-output';output.mkdir()
         ui.click('Wiederherstellungsordner wählen …');run('xdotool','key','ctrl+l');time.sleep(.2)
         entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(output));run('xdotool','key','Return')

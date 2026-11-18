@@ -71,6 +71,7 @@ impl RestoreView {
         let groups = self.groups.borrow();
         let mut visible = 0;
         let mut selected = 0;
+        let mut hidden_selected = 0;
         for group in groups.iter() {
             let mut found = false;
             for row in &group.rows {
@@ -78,7 +79,9 @@ impl RestoreView {
                 row.button.set_visible(matches);
                 found |= matches;
                 visible += usize::from(matches);
-                selected += usize::from(row.button.is_active());
+                let checked = row.button.is_active();
+                selected += usize::from(checked);
+                hidden_selected += usize::from(checked && !matches);
             }
             group.container.set_visible(found);
         }
@@ -88,8 +91,12 @@ impl RestoreView {
                 1 => "1 Sicherungsdatei gefunden".into(),
                 _ => format!("{visible} Sicherungsdateien gefunden"),
             };
-            self.status
-                .set_text(&format!("{count} · {selected} ausgewählt"));
+            let selection = if hidden_selected > 0 {
+                format!("{selected} ausgewählt ({hidden_selected} außerhalb der Suche)")
+            } else {
+                format!("{selected} ausgewählt")
+            };
+            self.status.set_text(&format!("{count} · {selection}"));
         }
         self.action.set_sensitive(
             selected > 0
