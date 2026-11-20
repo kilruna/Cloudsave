@@ -1,8 +1,9 @@
 use rusqlite::{params, Connection};
+use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use crate::Result;
+use crate::{Result, Target};
 
 pub struct State {
     conn: Connection,
@@ -108,7 +109,41 @@ impl State {
             )",
             [],
         )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS successful_syncs (
+                targets TEXT PRIMARY KEY,
+                completed_at INTEGER NOT NULL
+            )",
+            [],
+        )?;
         Ok(State { conn })
+    }
+
+    pub fn last_successful_sync(&self, targets: &[Target]) -> Result<Option<i64>> {
+        let value = self.conn.query_row(
+            "SELECT MAX(completed_at) FROM successful_syncs WHERE targets = ?1",
+            [Self::target_set(targets)?],
+            |row| row.get(0),
+        )?;
+        Ok(value)
+    }
+
+    pub(crate) fn record_successful_sync(&self, targets: &[Target]) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO successful_syncs (targets, completed_at) VALUES (?1, ?2)",
+            params![Self::target_set(targets)?, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    fn target_set(targets: &[Target]) -> Result<String> {
+        let mut keys = targets
+            .iter()
+            .map(crate::engine::target_prefix)
+            .collect::<Result<Vec<_>>>()?;
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(keys.join(":"))
     }
 
     pub fn get(&self, path: &str) -> Result<Option<FileEntry>> {
@@ -134,6 +169,14 @@ impl State {
             "INSERT OR REPLACE INTO files (path, size, mtime, hash, synced_at)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![path, size, mtime, hash, now_secs()],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn update_mtime(&self, path: &str, mtime: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE files SET mtime = ?2 WHERE path = ?1",
+            params![path, mtime],
         )?;
         Ok(())
     }
@@ -198,6 +241,27 @@ impl State {
             .conn
             .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         Ok(n)
+    }
+
+    /// Report copies at the currently configured targets without discarding tracked backups.
+    pub fn stats_for_targets(&self, targets: &[Target]) -> Result<(i64, i64, Option<i64>)> {
+        let mut query = self.conn.prepare(
+            "SELECT COUNT(*), COALESCE(SUM(size), 0), MAX(synced_at) FROM files WHERE path GLOB ?1",
+        )?;
+        let mut stats = (0, 0, None);
+        let mut seen = HashSet::new();
+        for target in targets {
+            let pattern = format!("{}::*", crate::engine::target_prefix(target)?);
+            if !seen.insert(pattern.clone()) {
+                continue;
+            }
+            let (count, size, last): (i64, i64, Option<i64>) =
+                query.query_row([pattern], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+            stats.0 += count;
+            stats.1 += size;
+            stats.2 = stats.2.max(last);
+        }
+        Ok(stats)
     }
 
     pub fn total_size(&self) -> Result<i64> {

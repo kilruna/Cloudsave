@@ -212,6 +212,62 @@ fn no_targets_is_an_error_but_an_empty_source_is_valid() {
     assert!(report.errors.iter().any(|e| e.contains("Kein Endpunkt")));
 }
 
+#[test]
+fn delta_sync_repairs_missing_copies_and_reports_each_target() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("Documents");
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    let state_path = temp.path().join("state.db");
+    fs::create_dir_all(source.join("nested")).unwrap();
+    fs::write(source.join("nested/file"), b"original").unwrap();
+    let mut config = make_config(&source, &first);
+    config.targets.insert(
+        0,
+        Target::Local {
+            path: second.clone(),
+        },
+    );
+    assert_eq!(sync(&config, &state_path).unwrap().uploaded, 2);
+    let state = State::open(&state_path).unwrap();
+    let last_success = state.last_successful_sync(&config.targets).unwrap();
+    assert!(last_success.is_some());
+
+    fs::remove_dir_all(second.join("Documents")).unwrap();
+    let repaired = sync(&config, &state_path).unwrap();
+    assert!(repaired.errors.is_empty());
+    assert_eq!((repaired.uploaded, repaired.skipped), (1, 1));
+    assert_eq!(
+        fs::read(second.join("Documents/nested/file")).unwrap(),
+        b"original"
+    );
+    rusqlite::Connection::open(&state_path)
+        .unwrap()
+        .execute("UPDATE successful_syncs SET completed_at = 1", [])
+        .unwrap();
+    let last_success = Some(1);
+
+    fs::remove_dir_all(&second).unwrap();
+    fs::write(&second, b"blocked backup location").unwrap();
+    let partial = sync(&config, &state_path).unwrap();
+    assert_eq!(partial.skipped, 1);
+    assert!(!partial.targets[0].errors.is_empty());
+    assert!(partial.targets[1].errors.is_empty());
+    assert_eq!(
+        state.last_successful_sync(&config.targets).unwrap(),
+        last_success
+    );
+
+    config.folders.clear();
+    let empty = sync(&config, &state_path).unwrap();
+    assert!(!empty.attempted);
+    assert!(empty.targets.is_empty());
+    assert_eq!(
+        state.last_successful_sync(&config.targets).unwrap(),
+        last_success
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn incomplete_scan_preserves_backups_but_complete_scans_still_mirror_deletes() {
@@ -555,6 +611,15 @@ fn explicit_live_removal_survives_restart_and_retries_only_the_failed_target() {
     fs::write(&second, b"unavailable mount").unwrap();
     config.remove_folder(&source).unwrap();
     config.save(&config_path).unwrap();
+
+    let mut detached = config.clone();
+    detached.remove_target(&config.targets[0]);
+    assert_eq!(
+        detached.settings.pending_folder_removals[0].targets,
+        [config.targets[1].clone()]
+    );
+    detached.remove_target(&config.targets[1]);
+    assert!(detached.settings.pending_folder_removals.is_empty());
 
     let mut config = Config::load(&config_path).unwrap();
     let report = sync(&config, &state).unwrap();

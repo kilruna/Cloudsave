@@ -131,6 +131,26 @@ impl Default for Settings {
 }
 
 impl Config {
+    pub fn has_sync_work(&self) -> bool {
+        !self.folders.is_empty()
+            || self.settings.pending_folder_removals.iter().any(|removal| {
+                removal
+                    .targets
+                    .iter()
+                    .any(|target| self.targets.contains(target))
+            })
+    }
+
+    pub fn remove_target(&mut self, target: &Target) {
+        self.targets.retain(|entry| entry != target);
+        for removal in &mut self.settings.pending_folder_removals {
+            removal.targets.retain(|entry| entry != target);
+        }
+        self.settings
+            .pending_folder_removals
+            .retain(|removal| !removal.targets.is_empty());
+    }
+
     /// Expose previously unchecked folders from this profile's saved ownership records.
     pub fn initialize_disabled_folders(&mut self, state_path: &Path) -> Result<bool> {
         if self.settings.disabled_folders.is_some() {

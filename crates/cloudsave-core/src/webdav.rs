@@ -168,6 +168,39 @@ impl WebdavBackend {
 }
 
 impl WebdavBackend {
+    fn directory_xml(
+        &self,
+        directory: &reqwest::Url,
+        control: &TransferControl,
+        missing_ok: bool,
+    ) -> io::Result<Option<String>> {
+        let method = reqwest::Method::from_bytes(b"PROPFIND").map_err(io::Error::other)?;
+        let xml = retry::run(control, || {
+            let response = self.request(method.clone(), directory.as_str()).header("Depth", "1").header("Content-Type", "application/xml")
+                .body(r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#)
+                .send().map_err(request_error)?;
+            let status = response.status();
+            if missing_ok && status == reqwest::StatusCode::NOT_FOUND {
+                return Ok(None);
+            }
+            if status.as_u16() != 207 {
+                return Err(status_error(
+                    status,
+                    format!("Sicherungen lesen: HTTP {status}"),
+                ));
+            }
+            let mut xml = String::new();
+            ResponseBody(response)
+                .take(16 * 1024 * 1024 + 1)
+                .read_to_string(&mut xml)?;
+            Ok(Some(xml))
+        })?;
+        if xml.as_ref().is_some_and(|xml| xml.len() > 16 * 1024 * 1024) {
+            return Err(io::Error::other("WebDAV-Verzeichnisantwort zu groß"));
+        }
+        Ok(xml)
+    }
+
     fn list_from(
         &self,
         root: reqwest::Url,
@@ -184,33 +217,10 @@ impl WebdavBackend {
             if visited.len() + files.len() > 100_000 {
                 return Err(io::Error::other("Zu viele Sicherungseinträge; bitte einen kleineren WebDAV-Unterordner als Ziel wählen"));
             }
-            let method = reqwest::Method::from_bytes(b"PROPFIND").map_err(io::Error::other)?;
-            let xml = retry::run(control, || {
-                let response = self.request(method.clone(), directory.as_str()).header("Depth", "1").header("Content-Type", "application/xml")
-                    .body(r#"<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:getcontentlength/></d:prop></d:propfind>"#)
-                    .send().map_err(request_error)?;
-                let status = response.status();
-                if missing_ok && status == reqwest::StatusCode::NOT_FOUND && directory == root {
-                    return Ok(None);
-                }
-                if status.as_u16() != 207 {
-                    return Err(status_error(
-                        status,
-                        format!("Sicherungen lesen: HTTP {status}"),
-                    ));
-                }
-                let mut xml = String::new();
-                ResponseBody(response)
-                    .take(16 * 1024 * 1024 + 1)
-                    .read_to_string(&mut xml)?;
-                Ok(Some(xml))
-            })?;
+            let xml = self.directory_xml(&directory, control, missing_ok && directory == root)?;
             let Some(xml) = xml else {
                 return Ok(None);
             };
-            if xml.len() > 16 * 1024 * 1024 {
-                return Err(io::Error::other("WebDAV-Verzeichnisantwort zu groß"));
-            }
             let (entries, collections) = parse_listing(&root, &directory, &xml, missing_ok)?;
             files.extend(entries);
             queue.extend(collections);
@@ -225,6 +235,25 @@ impl Backend for WebdavBackend {
         Ok(self
             .list_from(root, &TransferControl::default(), false)?
             .unwrap_or_default())
+    }
+
+    fn list_files(&self, parent: &Path, control: &TransferControl) -> io::Result<Vec<BackupFile>> {
+        let url = if parent.as_os_str().is_empty() {
+            format!("{}/", self.base)
+        } else {
+            crate::restore::validate_relative(parent)?;
+            format!("{}/", self.url_for(parent))
+        };
+        let directory = reqwest::Url::parse(&url).map_err(io::Error::other)?;
+        let Some(xml) = self.directory_xml(&directory, control, true)? else {
+            return Ok(Vec::new());
+        };
+        let (mut files, _) = parse_listing(&directory, &directory, &xml, true)?;
+        files.retain(|file| file.path.parent() == Some(Path::new("")));
+        for file in &mut files {
+            file.path = parent.join(&file.path);
+        }
+        Ok(files)
     }
 
     fn list_folder(

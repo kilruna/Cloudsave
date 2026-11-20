@@ -279,8 +279,7 @@ fn target_picker(
         .build();
 
     let row_local = adw::ActionRow::builder()
-        .title("Lokaler Ordner / USB-Laufwerk")
-        .subtitle("z. B. externe Platte oder lokales Backup-Verzeichnis")
+        .title("Ordner oder Laufwerk")
         .build();
     let radio_local = gtk::CheckButton::new();
     radio_local.set_active(true);
@@ -292,10 +291,7 @@ fn target_picker(
     row_local.add_suffix(&select_local);
     group.add(&row_local);
 
-    let row_webdav = adw::ActionRow::builder()
-        .title("WebDAV (HTTPS)")
-        .subtitle("z. B. Hetzner Storage Box, Nextcloud, ownCloud – Port 443")
-        .build();
+    let row_webdav = adw::ActionRow::builder().title("Cloud-Speicher").build();
     let radio_webdav = gtk::CheckButton::new();
     radio_webdav.set_group(Some(&radio_local));
     radio_webdav.set_valign(gtk::Align::Center);
@@ -303,23 +299,9 @@ fn target_picker(
     row_webdav.add_suffix(&radio_webdav);
     group.add(&row_webdav);
 
-    for (title, sub) in [
-        ("SFTP", "noch nicht verfügbar"),
-        ("SSH (rsync)", "noch nicht verfügbar"),
-        ("FTP / FTPS", "noch nicht verfügbar"),
-    ] {
-        let row = adw::ActionRow::builder().title(title).subtitle(sub).build();
-        row.set_sensitive(false);
-        let radio = gtk::CheckButton::new();
-        radio.set_sensitive(false);
-        radio.set_valign(gtk::Align::Center);
-        row.add_suffix(&radio);
-        group.add(&row);
-    }
-
     let form = adw::PreferencesGroup::builder()
-        .title("Zugangsdaten (WebDAV)")
-        .description("Beispiel: u123456.your-storagebox.de – https:// wird automatisch ergänzt.")
+        .title("WebDAV-Zugangsdaten")
+        .description("Gib die WebDAV-Adresse deines Anbieters ein, etwa für Nextcloud oder eine Hetzner Storage Box.")
         .visible(false)
         .build();
     let user_entry = adw::EntryRow::builder().title("Benutzername").build();
@@ -337,20 +319,20 @@ fn target_picker(
     });
     url_entry.add_controller(focus);
     let pw_entry = adw::PasswordEntryRow::builder().title("Passwort").build();
-    let test_row = adw::ActionRow::builder().title("Verbindung").build();
-    let test_btn = gtk::Button::with_label("Testen");
+    let test_row = adw::ActionRow::builder().build();
+    let test_btn = gtk::Button::with_label("Verbindung testen");
     test_btn.set_valign(gtk::Align::Center);
     test_row.add_suffix(&test_btn);
     let status_label = gtk::Label::new(Some(""));
     status_label.add_css_class("dim-label");
     status_label.set_xalign(0.0);
-    let status_row = adw::ActionRow::builder().title("Status").build();
-    status_row.add_suffix(&status_label);
+    status_label.set_wrap(true);
+    status_label.set_visible(false);
     form.add(&user_entry);
     form.add(&url_entry);
     form.add(&pw_entry);
     form.add(&test_row);
-    form.add(&status_row);
+    form.add(&status_label);
     let url_error = gtk::Label::new(None);
     url_error.set_wrap(true);
     url_error.set_xalign(0.0);
@@ -467,6 +449,7 @@ fn target_picker(
         let pw_entry = pw_entry.clone();
         let status_label = status_label.clone();
         test_btn.connect_clicked(move |_| {
+            status_label.set_visible(true);
             let url = match cloudsave_core::normalize_webdav_url(&url_entry.text()) {
                 Ok(url) => url,
                 Err(error) => {

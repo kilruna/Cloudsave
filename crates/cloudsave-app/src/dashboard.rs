@@ -30,7 +30,19 @@ struct SyncUi {
     symbol: gtk::DrawingArea,
     files: gtk::Label,
     size: gtk::Label,
-    last_sync: gtk::Label,
+    last_transfer: gtk::Label,
+    last_success: gtk::Label,
+    add_folder: gtk::Button,
+    targets: Vec<TargetStatus>,
+    errors: gtk::Expander,
+    error_text: gtk::Label,
+}
+
+#[derive(Clone)]
+struct TargetStatus {
+    summary: gtk::Label,
+    details: gtk::Expander,
+    error_text: gtk::Label,
 }
 
 fn separator() -> gtk::Separator {
@@ -39,48 +51,64 @@ fn separator() -> gtk::Separator {
     line
 }
 
-fn stat_card(symbol: Icon, caption: &str) -> (gtk::Box, gtk::Label) {
-    let card = gtk::Box::new(gtk::Orientation::Horizontal, 17);
-    card.add_css_class("card");
-    card.add_css_class("stat-card");
-    let glyph = icon(symbol, 34, 0.96, 0.74, 0.51);
-    glyph.add_css_class("stat-icon");
-    card.append(&glyph);
-    let text = gtk::Box::new(gtk::Orientation::Vertical, 3);
-    text.set_hexpand(true);
+fn stat_row(symbol: Icon, caption: &str) -> (gtk::Box, gtk::Label) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.append(&icon(symbol, 18, 0.96, 0.74, 0.51));
     let value = gtk::Label::new(Some("—"));
-    value.add_css_class("stat-value");
-    value.set_xalign(0.0);
-    value.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    value.add_css_class("heading");
     let name = gtk::Label::new(Some(caption));
     name.add_css_class("stat-caption");
+    name.set_hexpand(true);
     name.set_xalign(0.0);
     name.set_wrap(true);
-    text.append(&value);
-    text.append(&name);
-    card.append(&text);
-    (card, value)
+    row.append(&name);
+    row.append(&value);
+    (row, value)
 }
 
-fn update_stats(ui: &SyncUi, state_path: &Path) {
-    let values = State::open(state_path)
-        .and_then(|state| Ok((state.count()?, state.total_size()?, state.last_synced()?)));
+fn error_details() -> (gtk::Expander, gtk::Label) {
+    let expander = gtk::Expander::new(Some("Fehlerdetails"));
+    expander.set_visible(false);
+    let text = gtk::Label::new(None);
+    text.set_xalign(0.0);
+    text.set_wrap(true);
+    text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    text.set_selectable(true);
+    expander.set_child(Some(&text));
+    (expander, text)
+}
+
+fn update_stats(ui: &SyncUi, state_path: &Path, targets: &[Target]) {
+    let state = State::open(state_path);
+    let values = state
+        .as_ref()
+        .ok()
+        .and_then(|state| state.stats_for_targets(targets).ok());
     match values {
-        Ok((count, size, last)) => {
+        Some((count, size, last)) => {
             ui.files.set_text(&count.to_string());
             ui.size
                 .set_text(&crate::jobs::format_bytes(size.max(0) as f64));
-            ui.last_sync.set_text(&if last.is_some() {
+            ui.last_transfer.set_text(&if last.is_some() {
                 fmt_rel(last)
             } else {
                 "Noch nie".into()
             });
         }
-        Err(_) => {
+        None => {
             ui.files.set_text("—");
             ui.size.set_text("—");
-            ui.last_sync.set_text("—");
+            ui.last_transfer.set_text("—");
         }
+    }
+    ui.last_success.set_visible(!targets.is_empty());
+    let text = match state.and_then(|state| state.last_successful_sync(targets)) {
+        Ok(Some(time)) => format!("Letzte erfolgreiche Sicherung {}", fmt_rel(Some(time))),
+        Ok(None) => "Noch keine bestätigte Sicherung".into(),
+        Err(_) => "Sicherungsstatus konnte nicht gelesen werden".into(),
+    };
+    if ui.last_success.text().as_str() != text {
+        ui.last_success.set_text(&text);
     }
 }
 
@@ -106,6 +134,8 @@ fn set_status(ui: &SyncUi, status: &str) {
     ui.sub.set_tooltip_text(None);
     ui.progress.set_visible(busy);
     ui.controls.set_visible(busy);
+    ui.errors.set_visible(false);
+    ui.errors.set_expanded(false);
 }
 
 fn endpoint_card(
@@ -114,11 +144,15 @@ fn endpoint_card(
     target: &Target,
     index: usize,
     count: usize,
-) -> gtk::Box {
+    config: &Rc<RefCell<Config>>,
+    progress: &gtk::ProgressBar,
+) -> (gtk::Box, TargetStatus) {
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("card");
     card.add_css_class("panel");
     card.add_css_class("endpoint-card");
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    header.set_margin_bottom(16);
     let heading = gtk::Label::new(Some(&if count == 1 {
         "Ziel".into()
     } else {
@@ -126,8 +160,32 @@ fn endpoint_card(
     }));
     heading.add_css_class("section-title");
     heading.set_xalign(0.0);
-    heading.set_margin_bottom(16);
-    card.append(&heading);
+    heading.set_hexpand(true);
+    header.append(&heading);
+    let label = format!("{} entfernen", cloudsave_core::target_label(target));
+    let remove = remove_button(&label);
+    remove.set_tooltip_text(Some("Endpunkt entfernen · verfügbar zwischen Aufträgen"));
+    progress
+        .bind_property("visible", &remove, "sensitive")
+        .invert_boolean()
+        .sync_create()
+        .build();
+    {
+        let window = window.downgrade();
+        let nav = nav.downgrade();
+        let config = config.clone();
+        let target = target.clone();
+        let progress = progress.downgrade();
+        remove.connect_clicked(move |_| {
+            if let (Some(window), Some(nav), Some(progress)) =
+                (window.upgrade(), nav.upgrade(), progress.upgrade())
+            {
+                confirm_target_removal(&window, &nav, &config, &target, &progress);
+            }
+        });
+    }
+    header.append(&remove);
+    card.append(&header);
     card.append(&separator());
 
     let (name, description) = match target {
@@ -173,8 +231,15 @@ fn endpoint_card(
     subtitle.set_max_width_chars(30);
     subtitle.set_tooltip_text(Some(&description));
     text.append(&subtitle);
+    let summary = gtk::Label::new(Some("Noch nicht geprüft"));
+    summary.add_css_class("target-result");
+    summary.set_wrap(true);
+    summary.set_xalign(0.0);
+    text.append(&summary);
     details.append(&text);
     card.append(&details);
+    let (result_details, error_text) = error_details();
+    card.append(&result_details);
 
     let test = gtk::Button::with_label("Verbindung testen");
     test.add_css_class("secondary-btn");
@@ -241,7 +306,76 @@ fn endpoint_card(
             ));
         });
     }
-    card
+    (
+        card,
+        TargetStatus {
+            summary,
+            details: result_details,
+            error_text,
+        },
+    )
+}
+
+fn remove_button(label: &str) -> gtk::Button {
+    let remove = gtk::Button::new();
+    remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
+    remove.add_css_class("folder-remove");
+    remove.set_valign(gtk::Align::Center);
+    remove.set_tooltip_text(Some(label));
+    remove.update_property(&[gtk::accessible::Property::Label(label)]);
+    remove
+}
+
+fn confirm_target_removal(
+    window: &gtk::Window,
+    nav: &adw::NavigationView,
+    config: &Rc<RefCell<Config>>,
+    target: &Target,
+    progress: &gtk::ProgressBar,
+) {
+    let detail = format!(
+        "{}\n\nCloudsave beendet die Sicherung an diesem Ziel. Vorhandene Sicherungen am Ziel bleiben erhalten.",
+        cloudsave_core::target_label(target)
+    );
+    let dialog = adw::AlertDialog::new(Some("Endpunkt entfernen?"), Some(&detail));
+    dialog.add_responses(&[("cancel", "Abbrechen"), ("remove", "Endpunkt entfernen")]);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    dialog.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+    let window_ref = window.downgrade();
+    let nav = nav.downgrade();
+    let config = config.clone();
+    let target = target.clone();
+    let progress = progress.downgrade();
+    dialog.connect_response(Some("remove"), move |_, _| {
+        let (Some(window), Some(nav), Some(progress)) =
+            (window_ref.upgrade(), nav.upgrade(), progress.upgrade())
+        else {
+            return;
+        };
+        let message = if progress.is_visible() || crate::jobs::snapshot().active.is_some() {
+            "Ein Auftrag läuft. Entferne den Endpunkt, sobald er beendet ist.".into()
+        } else {
+            let mut updated = config.borrow().clone();
+            updated.remove_target(&target);
+            match updated.save(&Config::default_path()) {
+                Ok(()) => {
+                    *config.borrow_mut() = updated.clone();
+                    crate::jobs::target_removed(&target);
+                    crate::onboarding::show_dashboard(&window, &nav, &updated, false);
+                    return;
+                }
+                Err(error) => error.to_string(),
+            }
+        };
+        let failure = adw::AlertDialog::new(
+            Some("Endpunkt konnte nicht entfernt werden"),
+            Some(&message),
+        );
+        failure.add_response("close", "OK");
+        failure.present(Some(&window));
+    });
+    dialog.present(Some(window));
 }
 
 pub fn build(
@@ -271,23 +405,53 @@ pub fn build(
     page.add_css_class("dashboard");
     page.set_spacing(16);
 
-    let banner = gtk::Box::new(gtk::Orientation::Horizontal, 20);
+    let banner = gtk::Box::new(gtk::Orientation::Horizontal, 16);
     banner.add_css_class("status-banner");
-    let status_symbol = icon(Icon::Refresh, 46, 1.0, 0.72, 0.43);
-    status_symbol.set_halign(gtk::Align::Start);
+    let summary = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    summary.set_hexpand(true);
+    summary.set_valign(gtk::Align::Center);
+    let status_symbol = icon(Icon::Refresh, 34, 1.0, 0.72, 0.43);
+    status_symbol.set_valign(gtk::Align::Start);
     status_symbol.add_css_class("status-symbol");
-    banner.append(&status_symbol);
+    summary.append(&status_symbol);
     let status_text = gtk::Box::new(gtk::Orientation::Vertical, 5);
     status_text.set_hexpand(true);
-    banner.append(&status_text);
+    summary.append(&status_text);
+    banner.append(&summary);
     let sync_btn = gtk::Button::with_label("Jetzt synchronisieren");
     sync_btn.add_css_class("sync-btn");
     sync_btn.set_valign(gtk::Align::Center);
     let action = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    action.set_halign(gtk::Align::Center);
     action.append(&gtk::Image::from_icon_name("view-refresh-symbolic"));
     action.append(&gtk::Label::new(Some("Jetzt synchronisieren")));
     sync_btn.set_child(Some(&action));
-    banner.append(&sync_btn);
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    actions.set_valign(gtk::Align::Center);
+    actions.append(&sync_btn);
+    let add_folder = gtk::Button::with_label("Ordner hinzufügen");
+    add_folder.add_css_class("sync-btn");
+    add_folder.set_visible(false);
+    actions.append(&add_folder);
+    let add_target = gtk::Button::with_label("Endpunkt hinzufügen");
+    add_target.add_css_class("sync-btn");
+    add_target.set_visible(config.borrow().targets.is_empty());
+    actions.append(&add_target);
+    let restore = gtk::Button::with_label("Wiederherstellen");
+    restore.add_css_class("secondary-btn");
+    restore.set_visible(!config.borrow().targets.is_empty());
+    {
+        let window = window.downgrade();
+        let nav = nav.downgrade();
+        let config = config.clone();
+        restore.connect_clicked(move |_| {
+            if let (Some(window), Some(nav)) = (window.upgrade(), nav.upgrade()) {
+                nav.push(&crate::restore::page(&window, &config.borrow().targets));
+            }
+        });
+    }
+    actions.append(&restore);
+    banner.append(&actions);
     page.append(&banner);
 
     let status_title = gtk::Label::new(Some("Bereit"));
@@ -304,10 +468,19 @@ pub fn build(
     status_sub.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     status_sub.set_selectable(true);
     status_text.append(&status_sub);
+    let last_success = gtk::Label::new(None);
+    last_success.set_xalign(0.0);
+    last_success.set_wrap(true);
+    last_success.add_css_class("watch-status");
+    status_text.append(&last_success);
+    let (errors, error_text) = error_details();
+    status_text.append(&errors);
 
     let progress = gtk::ProgressBar::new();
     progress.add_css_class("sync-progress");
     progress.set_fraction(0.0);
+    progress.set_show_text(true);
+    progress.set_text(Some("Abgleich läuft …"));
     progress.set_hexpand(true);
     progress.set_visible(false);
     status_text.append(&progress);
@@ -338,6 +511,7 @@ pub fn build(
     auto_status.set_wrap(true);
     auto_status.set_xalign(0.0);
     auto_status.add_css_class("watch-status");
+    let (watch_details, watch_error_text) = error_details();
 
     let cols = gtk::Box::new(gtk::Orientation::Horizontal, 24);
     cols.set_hexpand(true);
@@ -415,6 +589,17 @@ pub fn build(
         });
     }
     left.append(&add_btn);
+    add_folder
+        .bind_property("visible", &add_btn, "visible")
+        .invert_boolean()
+        .sync_create()
+        .build();
+    let folder_picker = add_btn.downgrade();
+    add_folder.connect_clicked(move |_| {
+        if let Some(button) = folder_picker.upgrade() {
+            button.emit_clicked();
+        }
+    });
 
     let settings_card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     settings_card.add_css_class("card");
@@ -604,14 +789,33 @@ pub fn build(
         empty.append(&title);
         right.append(&empty);
     }
-    for (index, target) in targets.iter().enumerate() {
-        right.append(&endpoint_card(window, nav, target, index, targets.len()));
-    }
+    let target_statuses = targets
+        .iter()
+        .enumerate()
+        .map(|(index, target)| {
+            let (card, status) = endpoint_card(
+                window,
+                nav,
+                target,
+                index,
+                targets.len(),
+                &config,
+                &progress,
+            );
+            right.append(&card);
+            status
+        })
+        .collect();
 
     let add_target_btn = gtk::Button::new();
     add_target_btn.add_css_class("add-btn");
     add_target_btn.set_halign(gtk::Align::Start);
     add_target_btn.set_margin_top(10);
+    progress
+        .bind_property("visible", &add_target_btn, "sensitive")
+        .invert_boolean()
+        .sync_create()
+        .build();
     let add_target_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     add_target_box.append(&icon(Icon::Cloud, 18, 1.0, 1.0, 1.0));
     add_target_box.append(&gtk::Label::new(Some("Weiteren Endpunkt hinzufügen")));
@@ -629,6 +833,13 @@ pub fn build(
         });
     }
     right.append(&add_target_btn);
+    add_target_btn.set_visible(!targets.is_empty());
+    let target_picker = add_target_btn.downgrade();
+    add_target.connect_clicked(move |_| {
+        if let Some(button) = target_picker.upgrade() {
+            button.emit_clicked();
+        }
+    });
 
     let automatic = gtk::Box::new(gtk::Orientation::Vertical, 6);
     automatic.add_css_class("sync-controls");
@@ -662,20 +873,22 @@ pub fn build(
     auto_row.append(&auto_switch);
     automatic.append(&auto_row);
     automatic.append(&auto_status);
+    automatic.append(&watch_details);
     right.append(&automatic);
 
-    let stats = gtk::Box::new(gtk::Orientation::Horizontal, 16);
-    stats.set_homogeneous(true);
-    let (files_card, files_value) = stat_card(Icon::File, "Dateien gesichert");
-    let (size_card, size_value) = stat_card(Icon::Storage, "Erfasste Sicherungsgröße");
-    let (time_card, time_value) = stat_card(Icon::Clock, "Letzte Übertragung");
-    files_card.set_tooltip_text(Some("Erfasste Dateikopien über alle Sicherungsziele."));
-    size_card.set_tooltip_text(Some("Größe der erfassten Sicherungskopien über alle Ziele. Dies ist nicht der gesamte belegte oder freie Speicherplatz des Servers."));
-    time_card.set_tooltip_text(Some("Zeitpunkt der letzten erfassten Dateiübertragung."));
-    stats.append(&files_card);
-    stats.append(&size_card);
-    stats.append(&time_card);
-    page.insert_child_after(&stats, Some(&banner));
+    let stats = gtk::Expander::new(Some("Sicherungsdetails"));
+    stats.add_css_class("card");
+    stats.add_css_class("stats");
+    let stats_rows = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    stats_rows.set_margin_top(12);
+    let (files_row, files_value) = stat_row(Icon::File, "Erfasste Dateikopien");
+    let (size_row, size_value) = stat_row(Icon::Storage, "Erfasste Sicherungsgröße");
+    let (time_row, time_value) = stat_row(Icon::Clock, "Letzte Übertragung");
+    stats_rows.append(&files_row);
+    stats_rows.append(&size_row);
+    stats_rows.append(&time_row);
+    stats.set_child(Some(&stats_rows));
+    page.append(&stats);
     page.append(&settings_card);
 
     let ui = SyncUi {
@@ -690,17 +903,15 @@ pub fn build(
         symbol: status_symbol.clone(),
         files: files_value,
         size: size_value,
-        last_sync: time_value,
+        last_transfer: time_value,
+        last_success,
+        add_folder,
+        targets: target_statuses,
+        errors,
+        error_text,
     };
-    ui.sub.set_text(&status_sub_text(&state_path));
-    update_stats(&ui, &state_path);
-    if config.borrow().targets.is_empty() {
-        set_status(&ui, "error");
-        ui.title.set_text("Endpunkt einrichten");
-        ui.sub
-            .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
-        ui.btn.set_sensitive(false);
-    }
+    show_idle_config(&config.borrow(), &ui);
+    update_stats(&ui, &state_path, &targets);
     {
         let config = config.clone();
         let ui = ui.clone();
@@ -730,11 +941,6 @@ pub fn build(
         "orientation",
         Some(&gtk::Orientation::Vertical.to_value()),
     );
-    narrow.add_setter(
-        &stats,
-        "orientation",
-        Some(&gtk::Orientation::Vertical.to_value()),
-    );
     responsive.add_breakpoint(narrow);
     scrolled.set_vexpand(true);
 
@@ -753,16 +959,21 @@ pub fn build(
         let mut watch_error: Option<String> = None;
         let mut last = Instant::now();
         let mut stats_updated = Instant::now();
+        let mut has_work = config.borrow().has_sync_work();
         let owner = page.downgrade();
         glib::timeout_add_local(Duration::from_millis(500), move || {
             if owner.upgrade().is_none() {
                 return glib::ControlFlow::Break;
             }
             if stats_updated.elapsed() >= Duration::from_secs(30) {
-                update_stats(&ui, &state_path);
+                update_stats(&ui, &state_path, &config.borrow().targets);
                 stats_updated = Instant::now();
             }
             let cfg = config.borrow();
+            if ui.control.borrow().is_none() && has_work != cfg.has_sync_work() {
+                has_work = cfg.has_sync_work();
+                show_idle_config(&cfg, &ui);
+            }
             let next_watch_config = WatchConfig::for_config(&cfg, &state_path);
             if next_watch_config != watch_config {
                 watch_config = next_watch_config;
@@ -787,8 +998,8 @@ pub fn build(
             }
             let message = if !cfg.settings.auto_sync {
                 "Live-Sync pausiert. Manuelles Synchronisieren ist weiterhin möglich.".to_string()
-            } else if let Some(error) = &watch_error {
-                format!("Live-Sync eingeschränkt; der Kontrollscan bleibt aktiv: {error}")
+            } else if watch_error.is_some() {
+                "Live-Sync eingeschränkt. Der Kontrollscan bleibt aktiv.".into()
             } else if watch_ready {
                 "Live-Sync aktiv · Übertragung nach etwa 3 Sekunden Ruhezeit.".to_string()
             } else {
@@ -796,6 +1007,14 @@ pub fn build(
             };
             if auto_status.text().as_str() != message {
                 auto_status.set_text(&message);
+            }
+            let detail = watch_error
+                .as_deref()
+                .filter(|_| cfg.settings.auto_sync)
+                .unwrap_or_default();
+            if watch_error_text.text().as_str() != detail {
+                watch_error_text.set_text(detail);
+                watch_details.set_visible(!detail.is_empty());
             }
             if !cfg.settings.auto_sync {
                 pending = None;
@@ -976,13 +1195,8 @@ impl FolderList {
         text.append(&location);
         row.append(&text);
 
-        let remove = gtk::Button::new();
-        remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
-        remove.add_css_class("folder-remove");
-        remove.set_valign(gtk::Align::Center);
         let remove_label = format!("{name} entfernen");
-        remove.set_tooltip_text(Some(&remove_label));
-        remove.update_property(&[gtk::accessible::Property::Label(&remove_label)]);
+        let remove = remove_button(&remove_label);
         row.append(&remove);
 
         self.rows
@@ -1039,36 +1253,69 @@ impl FolderList {
     }
 }
 
-fn status_sub_text(state_path: &Path) -> String {
-    match State::open(state_path) {
-        Ok(state) => format!(
-            "{} Dateien gesichert · letzter Sync {}",
-            state.count().unwrap_or(0),
-            fmt_rel(state.last_synced().unwrap_or(None))
-        ),
-        Err(_) => "Noch kein Sync durchgeführt".to_string(),
-    }
-}
-
-fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
-    if config.borrow().targets.is_empty() {
-        set_status(ui, "error");
+fn show_idle_config(config: &Config, ui: &SyncUi) {
+    set_status(ui, "ready");
+    let has_targets = !config.targets.is_empty();
+    let has_work = config.has_sync_work();
+    ui.add_folder.set_visible(has_targets && !has_work);
+    ui.btn.set_visible(has_targets && has_work);
+    ui.btn.set_sensitive(has_targets && has_work);
+    ui.sub.set_visible(false);
+    if !has_targets {
         ui.title.set_text("Endpunkt einrichten");
         ui.sub
             .set_text("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.");
-        ui.progress.set_fraction(0.0);
-        ui.btn.set_sensitive(false);
+        ui.sub.set_visible(true);
+    } else if !has_work {
+        ui.title.set_text("Keine Ordner ausgewählt");
+    } else {
+        ui.title.set_text("Bereit");
+    }
+}
+
+fn show_target_status(status: &TargetStatus, title: &str, errors: &[String], success: bool) {
+    status.summary.set_text(title);
+    status.summary.remove_css_class("success");
+    status.summary.remove_css_class("error");
+    if success {
+        status.summary.add_css_class("success");
+    } else if !errors.is_empty() {
+        status.summary.add_css_class("error");
+    }
+    status.error_text.set_text(&errors.join("\n"));
+    status.details.set_expanded(false);
+    status.details.set_visible(!errors.is_empty());
+}
+
+fn show_sync_errors(ui: &SyncUi, title: &str, message: &str, errors: &str) {
+    set_status(ui, "error");
+    ui.title.set_text(title);
+    ui.sub.set_text(message);
+    ui.sub.set_visible(true);
+    ui.error_text.set_text(errors);
+    ui.errors.set_visible(!errors.is_empty());
+}
+
+fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
+    let cfg = config.borrow().clone();
+    if cfg.targets.is_empty() || !cfg.has_sync_work() {
+        show_idle_config(&cfg, ui);
         return;
     }
     ui.btn.set_sensitive(false);
     set_status(ui, "busy");
     ui.title.set_text("Sync läuft");
     ui.sub.set_text("Dateien werden abgeglichen …");
+    ui.sub.set_visible(true);
     ui.progress.set_fraction(0.0);
+    ui.progress.set_text(Some("Abgleich läuft …"));
     ui.pause.set_label("Pausieren");
     ui.controls.set_sensitive(true);
+    for status in &ui.targets {
+        show_target_status(status, "Wird geprüft …", &[], false);
+    }
 
-    let cfg = config.borrow().clone();
+    let folders = cfg.folders.clone();
     let control = TransferControl::default();
     *ui.control.borrow_mut() = Some(control.clone());
     let state_path_owned = state_path.to_path_buf();
@@ -1094,38 +1341,80 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
                     )),
                 }
             }
-            update_stats(&ui, &state_path);
+            let config = config.borrow();
+            update_stats(&ui, &state_path, &config.targets);
+            let affected = report
+                .targets
+                .iter()
+                .filter(|result| !result.errors.is_empty())
+                .count();
+            let source_error = report.errors.len()
+                > report
+                    .targets
+                    .iter()
+                    .map(|result| result.errors.len())
+                    .sum();
+            for (status, result) in ui.targets.iter().zip(&report.targets) {
+                let (title, success) = if report.cancelled {
+                    ("Abgleich abgebrochen", false)
+                } else if result.unavailable {
+                    let message = match result.target {
+                        Target::Local { .. } => "Sicherungsordner nicht verfügbar",
+                        Target::Webdav { .. } => "Cloud-Speicher nicht verfügbar",
+                    };
+                    (message, false)
+                } else if !result.errors.is_empty() {
+                    ("Sicherung unvollständig", false)
+                } else if source_error || config.folders != folders {
+                    ("Abgleich unvollständig", false)
+                } else {
+                    ("Sicherung geprüft", true)
+                };
+                show_target_status(status, title, &result.errors, success);
+            }
+            ui.btn.set_sensitive(true);
             if report.cancelled {
                 set_status(&ui, "ready");
                 ui.title.set_text("Sync abgebrochen");
                 ui.sub
-                    .set_text(&format!("{} Dateien gesichert", report.uploaded));
-            } else if report.errors.is_empty() {
+                    .set_text(&format!("{} Dateikopien übertragen", report.uploaded));
+            } else if !report.errors.is_empty() {
+                let title = match affected {
+                    1 => "Ein Ziel braucht Aufmerksamkeit",
+                    2.. => "Mehrere Ziele brauchen Aufmerksamkeit",
+                    _ => "Sicherung unvollständig",
+                };
+                let message = match (affected > 0, source_error) {
+                    (true, true) => "Prüfe die betroffenen Ziele und Quellordner.",
+                    (true, false) => "Prüfe die betroffenen Ziele.",
+                    _ => "Prüfe die Fehlerdetails und starte den Abgleich erneut.",
+                };
+                show_sync_errors(&ui, title, message, &report.errors.join("\n"));
+            } else if !config.has_sync_work() || !report.attempted {
+                show_idle_config(&config, &ui);
+            } else if config.folders != folders {
+                show_idle_config(&config, &ui);
+                ui.title.set_text("Ordnerauswahl geändert");
+            } else {
                 set_status(&ui, "success");
                 ui.title.set_text("Alles synchronisiert");
-                ui.sub.set_text(&status_sub_text(&state_path));
+                ui.sub.set_visible(false);
                 ui.progress.set_fraction(1.0);
-            } else {
-                set_status(&ui, "error");
-                ui.title
-                    .set_text(&format!("Sync mit {} Fehler(n)", report.errors.len()));
-                ui.sub.set_text(&format!(
-                    "{}\n{}\nMit „Jetzt synchronisieren“ erneut versuchen.",
-                    status_sub_text(&state_path),
-                    report.errors.join("\n")
-                ));
-                ui.progress.set_fraction(0.0);
             }
-            ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }
         Ok(Err(e)) => {
             ui.control.borrow_mut().take();
-            set_status(&ui, "error");
-            update_stats(&ui, &state_path);
-            ui.title.set_text("Sync fehlgeschlagen");
-            ui.sub.set_text(&e);
-            ui.progress.set_fraction(0.0);
+            update_stats(&ui, &state_path, &config.borrow().targets);
+            show_sync_errors(
+                &ui,
+                "Sync fehlgeschlagen",
+                "Starte den Abgleich erneut.",
+                &e,
+            );
+            for status in &ui.targets {
+                show_target_status(status, "Abgleich unvollständig", &[], false);
+            }
             ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }
@@ -1140,9 +1429,11 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
                 ui.controls
                     .set_sensitive(active.control_status != TransferStatus::Cancelling);
                 if let Some((bytes, total)) = active.fraction {
+                    ui.progress.set_text(Some("Aktuelle Datei"));
                     ui.progress
                         .set_fraction((bytes as f64 / total as f64).min(1.0));
                 } else if active.control_status == TransferStatus::Running {
+                    ui.progress.set_text(Some("Abgleich läuft …"));
                     ui.progress.pulse();
                 }
             }
@@ -1150,11 +1441,10 @@ fn trigger_sync(config: &Rc<RefCell<Config>>, ui: &SyncUi, state_path: &Path) {
         }
         Err(mpsc::TryRecvError::Disconnected) => {
             ui.control.borrow_mut().take();
-            set_status(&ui, "error");
-            ui.title.set_text("Sync abgebrochen");
-            ui.sub
-                .set_text("Mit „Jetzt synchronisieren“ erneut versuchen.");
-            ui.progress.set_fraction(0.0);
+            show_sync_errors(&ui, "Sync abgebrochen", "Starte den Abgleich erneut.", "");
+            for status in &ui.targets {
+                show_target_status(status, "Abgleich abgebrochen", &[], false);
+            }
             ui.btn.set_sensitive(true);
             glib::ControlFlow::Break
         }

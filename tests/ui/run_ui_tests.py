@@ -195,8 +195,13 @@ class UI:
         return [n['label'] for n in self.tree() if n['type']=='GtkLabel' and n['mapped']]
 
     def idle(self):
-        return eventually(lambda:self.find('GtkButton','Jetzt synchronisieren')['sensitive']
-                          or 'Endpunkt einrichten' in self.labels(),10)
+        return eventually(lambda: bool({'Endpunkt einrichten', 'Keine Ordner ausgewählt'}.intersection(self.labels()))
+                          or self.find('GtkButton','Jetzt synchronisieren',mapped=False)['sensitive'],10)
+
+    def expand(self, label):
+        node = self.find('GtkExpander', label)
+        self.command('activate', node['id'])
+        time.sleep(.25)
 
     def snapshot(self, tag):
         self.tree()
@@ -270,8 +275,10 @@ def onboarding():
         ui.set_active('GtkCheckButton',True)
         ui.click('Weiter')
         before=ui.snapshot('local-before-activate')
-        local=ui.find('GtkCheckButton', 'Lokaler Ordner / USB-Laufwerk')
+        local=ui.find('GtkCheckButton', 'Ordner oder Laufwerk')
         assert local['active']==1
+        assert sum(node['type']=='GtkCheckButton' and node['mapped'] for node in ui.tree()) == 2
+        assert not any(node['type']=='AdwEntryRow' and node['mapped'] for node in ui.tree())
         ui.command('activate',local['id']);time.sleep(.4)
         next_enabled=ui.find('GtkButton','Weiter')['sensitive']
         roots=[n for n in ui.tree() if n['parent']==-1 and n['visible']]
@@ -281,7 +288,7 @@ def onboarding():
         record('UI-05','Initially selected local target is actionable',bool(browse) or len(roots)>1 or bool(next_enabled),
                f'{len(roots)} visible top-level window(s), Next sensitive={next_enabled}, initial local radio active',
                'Activating local target offers directory selection or an explicit browse control', before+ui.snapshot('local-stuck'))
-        ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
+        ui.set_active('GtkCheckButton',True,'Cloud-Speicher')
         record('UI-06','Empty WebDAV credentials block Next',not ui.find('GtkButton','Weiter')['sensitive'],
                f'Next sensitive={ui.find("GtkButton","Weiter")["sensitive"]}','Next disabled without required fields')
         for title,value in [('Benutzername','qa-user'),('Server-URL','not a url'),('Passwort','synthetic-qa-value')]:
@@ -317,6 +324,7 @@ def dashboard():
     ui=UI('dashboard');source,targets=fixture(ui)
     try:
         ui.launch();ui.idle()
+        ui.expand('Sicherungsdetails')
         empty_stats=all(text in ui.labels() for text in ('0','0 B','Noch nie'))
         files=[p/'Documents/save.txt' for p in targets]
         record('UI-09','Auto-sync OFF suppresses startup sync',not any(p.exists() for p in files),
@@ -337,10 +345,15 @@ def dashboard():
         live_stats='4' in ui.labels() and f'{expected_size} B' in ui.labels()
         narrow=True
         if BINARY:
+            ui.expand('Sicherungsdetails')
+            run('xdotool','windowsize',str(ui.xid),'560','650');time.sleep(.4)
+            assert ui.find('GtkButton','Wiederherstellen')['sensitive']
+            assert ui.find('GtkButton','Jetzt synchronisieren')['sensitive']
+            ui.snapshot('overview-560')
             run('xdotool','windowsize',str(ui.xid),'560','900');time.sleep(.4)
             info=run('xwininfo','-id',str(ui.xid))
             width=int(next(line.split(':',1)[1] for line in info.splitlines() if line.strip().startswith('Width:')))
-            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel 1','Ziel 2','Erfasste Sicherungsgröße'))
+            narrow=width<=560 and all(text in ui.labels() for text in ('Gesicherte Ordner','Ziel 1','Ziel 2','Sicherungsdetails'))
             narrow=narrow and any(name.endswith('.png') for name in ui.snapshot('orange-narrow'))
             run('xdotool','windowsize',str(ui.xid),'1180','820');time.sleep(.4)
         record('UI-32','Dashboard shows actual backup statistics and adapts to narrow windows',empty_stats and live_stats and narrow,
@@ -361,7 +374,11 @@ def dashboard():
         ui.set_active('GtkCheckButton',False)
         saved=tomllib.loads(ui.cfg.read_text())['folders']
         ui.stop();ui.launch();ui.idle()
-        ui.click('Jetzt synchronisieren');ui.idle()
+        assert 'Keine Ordner ausgewählt' in ui.labels()
+        assert 'Alles synchronisiert' not in ui.labels()
+        assert ui.find('GtkButton', 'Ordner hinzufügen')['sensitive']
+        ui.click('Wiederherstellen')
+        assert eventually(lambda: {'save.txt', 'ümlaut.txt'}.issubset(ui.labels()))
         after=[p.exists() for p in files]
         record('UI-14','Disabling source preserves existing backups',all(after),
                f'Before={before}; after={after}; persisted folders={saved}; no confirmation dialog',
@@ -383,6 +400,8 @@ def missing_source():
         record('UI-15','Unavailable source does not purge backup',all(p.exists() for p in files),
                f'Backup present before={before}; after={[p.exists() for p in files]}; UI labels={labels[:8]}',
                'Missing/unmounted source produces safe error, leaving every existing backup intact',ui.snapshot('source-missing'))
+        ui.expand('Fehlerdetails')
+        labels=ui.labels()
         record('UI-16','Sync error includes actionable diagnostic',any('Ordner nicht gefunden' in s for s in labels),
                ' | '.join(s for s in labels if 'Sync' in s or 'gesichert' in s),
                'Show failing source/target and error reason, not just error count',ui.snapshot('hidden-error-details'))
@@ -406,6 +425,42 @@ def empty_targets():
         record('UI-18','Quit button terminates app',eventually(lambda:ui.proc.poll() is not None),
                f'Process return code={ui.proc.poll()}','App beenden exits the owned test process')
     finally:ui.stop()
+
+def sync_status():
+    app = UI('sync-status')
+    source, targets = fixture(app)
+    blocked = targets[0].with_name('first-backup-away')
+    try:
+        app.launch(); app.click('Jetzt synchronisieren'); assert app.idle()
+        copy = targets[0]/'Documents/save.txt'
+        copy.unlink()
+        app.click('Jetzt synchronisieren'); assert app.idle()
+        assert copy.read_bytes() == (source/'save.txt').read_bytes()
+        assert 'Alles synchronisiert' in app.labels()
+        assert any('Letzte erfolgreiche Sicherung' in label for label in app.labels())
+
+        targets[0].rename(blocked)
+        targets[0].write_text('blocks the first backup target')
+        (source/'save.txt').write_text('updated content sent to the other target')
+        app.click('Jetzt synchronisieren'); assert app.idle()
+        headings = ('Ziel 1', 'Ziel 2')
+        reports = []
+        for title in headings:
+            heading = app.find('GtkLabel', title)
+            card = app.nodes[app.nodes[heading['parent']]['parent']]
+            reports.append({node['label'] for node in app.descendants(card) if node['mapped']})
+        assert 'Ein Ziel braucht Aufmerksamkeit' in app.labels()
+        assert 'Sicherungsordner nicht verfügbar' in reports[0] and 'Sicherung geprüft' in reports[1]
+        assert 'Alles synchronisiert' not in app.labels()
+        assert (targets[1]/'Documents/save.txt').read_bytes() == (source/'save.txt').read_bytes()
+        assert (blocked/'Documents/save.txt').read_text() == 'qa-save-v1\n'
+        app.expand('Fehlerdetails')
+        assert any(str(targets[0]) in label and 'File exists' in label for label in app.labels())
+        record('UI-42','Repair missing copies and report partial sync results',True,
+               'Missing copy repaired; the blocked and successful target show their own outcome',
+               'Partial failure preserves original data and exposes technical details',app.snapshot('partial-failure'))
+    finally:
+        app.stop()
 
 
 def window_controls(ui):
@@ -446,9 +501,9 @@ def native_picker():
         ui.click('Ordner auswählen …');ui.click('_Cancel')
         states.extend([str(first) in ui.labels(),bool(ui.find('GtkButton','Weiter')['sensitive'])])
         choose_native_folder(ui,second)
-        ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
+        ui.set_active('GtkCheckButton',True,'Cloud-Speicher')
         states.append(not ui.find('GtkButton','Weiter')['sensitive'])
-        ui.set_active('GtkCheckButton',True,'Lokaler Ordner / USB-Laufwerk')
+        ui.set_active('GtkCheckButton',True,'Ordner oder Laufwerk')
         states.extend([str(second) in ui.labels(),bool(ui.find('GtkButton','Weiter')['sensitive'])])
         ui.click('Weiter');controls.append(len(window_controls(ui)))
         record('UI-19','Native chooser selection/cancel/reselection and wizard controls',all(states) and all(n==1 for n in controls),
@@ -461,7 +516,7 @@ def native_picker():
                f'First sync wrote selected target={second}; old target empty={not any(first.iterdir())}',
                'Setup start action performs its requested sync',ui.snapshot('first-sync'))
         ui.click('Weiteren Endpunkt hinzufügen')
-        ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
+        ui.set_active('GtkCheckButton',True,'Cloud-Speicher')
         for title,value in [('Benutzername','qa-user'),('Server-URL','not a url'),('Passwort','synthetic-only')]:
             n=ui.find('AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow',title)
             ui.command('text',n['id'],value)
@@ -496,7 +551,7 @@ def empty_or_missing_home():
 def unavailable_keyring():
     with UI('unavailable-keyring', home_dirs=('Documents',)) as ui:
         ui.click('Einrichtung starten');ui.set_active('GtkCheckButton',True);ui.click('Weiter')
-        ui.set_active('GtkCheckButton',True,'WebDAV (HTTPS)')
+        ui.set_active('GtkCheckButton',True,'Cloud-Speicher')
         for title,value in [('Benutzername','synthetic-qa'),('Server-URL','https://example.invalid'),('Passwort','not-a-real-password')]:
             entry=ui.find('AdwPasswordEntryRow' if title=='Passwort' else 'AdwEntryRow',title)
             ui.command('text',entry['id'],value)
@@ -530,7 +585,13 @@ def backup_mode():
 def open_exclusions(ui):
     menu=ui.find('GtkMenuButton')
     button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
-    ui.command('click',button['id']);time.sleep(.25)
+    ui.command('focus',button['id'])
+    time.sleep(.3)
+    menu=ui.find('GtkMenuButton')
+    button=next(n for n in ui.descendants(menu) if n['type']=='GtkToggleButton')
+    ui.command('click',button['id'])
+    assert eventually(lambda:any(node['type']=='GtkButton' and node['mapped']
+                                 and node['label']=='Ordner auswählen …' for node in ui.tree()))
 
 
 def exclusion_settings():
@@ -596,10 +657,20 @@ def automatic_changes():
 def restore_ui():
     ui=UI('restore-ui');source,targets=fixture(ui)
     try:
-        ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Sicherungen wiederherstellen');ui.click('Sicherungen laden')
-        listed=eventually(lambda:any('Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
-        checks=[node for node in ui.tree() if node['type']=='GtkCheckButton' and node['mapped']]
-        for check in reversed(checks):ui.command('active',check['id'],1)
+        ui.launch();ui.idle();ui.click('Jetzt synchronisieren');ui.idle();ui.click('Sicherungen wiederherstellen')
+        listed=eventually(lambda:any('Sicherungsdateien gefunden' in text for text in ui.labels()))
+        assert {'Documents', 'Documents/nested', 'save.txt', 'ümlaut.txt'}.issubset(ui.labels())
+        run('xdotool', 'windowsize', str(ui.xid), '560', '650')
+        time.sleep(.4)
+        search=ui.find('GtkSearchEntry')
+        ui.command('text',search['id'],'NESTED/ÜMLAUT')
+        assert eventually(lambda: 'ümlaut.txt' in ui.labels() and 'save.txt' not in ui.labels())
+        ui.set_active('GtkCheckButton',True,'ümlaut.txt')
+        search=ui.find('GtkSearchEntry')
+        ui.command('text',search['id'],'save')
+        assert eventually(lambda: 'save.txt' in ui.labels() and 'ümlaut.txt' not in ui.labels())
+        ui.set_active('GtkCheckButton',True,'save.txt')
+        assert any('2 ausgewählt (1 außerhalb der Suche)' in label for label in ui.labels())
         output=ui.root/'restore-output';output.mkdir()
         ui.click('Wiederherstellungsordner wählen …');run('xdotool','key','ctrl+l');time.sleep(.2)
         entry=ui.find('GtkFileChooserEntry');ui.command('text',entry['id'],str(output));run('xdotool','key','Return')
@@ -625,7 +696,8 @@ def endpoint_cards():
     targets[1].write_text('this file deliberately blocks the second endpoint')
     def card_nodes(title):
         heading=ui.find('GtkLabel',title)
-        card=ui.nodes[heading['parent']]
+        header=ui.nodes[heading['parent']]
+        card=ui.nodes[header['parent']]
         return ui.descendants(card)
     def click_in_card(title,label):
         node=next(n for n in card_nodes(title) if n['type']=='GtkButton' and n['label']==label)
@@ -646,17 +718,84 @@ def endpoint_cards():
         click_in_card('Ziel 2','Verbindung testen')
         second_error=eventually(lambda:any(str(targets[1]) in n['label'] and ':' in n['label'] and '✓' not in n['label'] for n in card_nodes('Ziel 2') if n['type']=='GtkLabel' and n['label'].startswith('Lokal:')))
         first_still_ok=any('✓' in n['label'] for n in card_nodes('Ziel 1'))
-        click_in_card('Ziel 2','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
+        click_in_card('Ziel 2','Sicherungen wiederherstellen')
         second_restore=eventually(lambda:any('Sicherungsziel nicht gefunden' in text and str(targets[1]) in text for text in ui.labels()))
         back=ui.find('AdwBackButton');button=next(n for n in ui.descendants(back) if n['type']=='GtkButton');ui.command('click',button['id']);time.sleep(.4)
-        click_in_card('Ziel 1','Sicherungen wiederherstellen');ui.click('Sicherungen laden')
-        first_restore=eventually(lambda:any('1 Sicherungsdatei(en) gefunden' in text for text in ui.labels()))
-        found=any('Archive/old.txt' in text for text in ui.labels())
+        click_in_card('Ziel 1','Sicherungen wiederherstellen')
+        first_restore=eventually(lambda:any('1 Sicherungsdatei gefunden' in text for text in ui.labels()))
+        found={'Archive', 'old.txt'}.issubset(ui.labels())
+        back=ui.find('AdwBackButton');button=next(n for n in ui.descendants(back) if n['type']=='GtkButton');ui.command('click',button['id']);time.sleep(.4)
+        ui.click('Wiederherstellen')
+        first_restore=first_restore and eventually(lambda:'old.txt' in ui.labels())
+        targets[1].unlink()
+        targets[1].mkdir()
+        dropdown=ui.find('GtkDropDown')
+        ui.command('selected', dropdown['id'], 1)
+        empty=eventually(lambda:'Keine Sicherungsdateien gefunden.' in ui.labels())
+        assert empty and ui.find('GtkButton','Erneut laden')['sensitive']
+        assert not ui.find('GtkButton','Wiederherstellungsordner wählen …')['sensitive']
         record('UI-33','Separate endpoint cards keep add action outside and scope connection/restore actions',
                separate and global_auto and enabled and paused and first_ok and second_error and first_still_ok and second_restore and first_restore and found,
                f'Separate cards={separate}; global auto={global_auto and enabled and paused}; tests isolated={first_ok and second_error and first_still_ok}; restore isolated={second_restore and first_restore and found}',
                'One card per endpoint; add outside; global auto is explicit; each card tests and restores only its own target',ui.snapshot('scoped-restore'))
     finally:ui.stop()
+
+
+def endpoint_removal():
+    app = UI('endpoint-removal')
+    source = app.root/'Dokumente'
+    source.mkdir()
+    file = source/'Probe.txt'
+    file.write_text('first backup')
+    targets = [app.root/'backup-one', app.root/'backup-two']
+    app.write_config([source], targets)
+
+    def open_removal(title):
+        heading = app.find('GtkLabel', title)
+        header = app.nodes[heading['parent']]
+        button = next(node for node in app.descendants(header) if node['type'] == 'GtkButton')
+        app.command('click', button['id'])
+
+    try:
+        app.launch()
+        run('xdotool', 'windowsize', str(app.xid), '1180', '940')
+        time.sleep(.4)
+        app.click('Jetzt synchronisieren')
+        assert app.idle()
+        copies = [target/'Dokumente/Probe.txt' for target in targets]
+        assert all(copy.read_text() == 'first backup' for copy in copies)
+        evidence = app.snapshot('buttons')
+        open_removal('Ziel 1')
+        assert eventually(lambda: any('Vorhandene Sicherungen am Ziel bleiben erhalten.' in label
+                                      for label in app.labels()))
+        app.click('Abbrechen')
+        assert len(tomllib.loads(app.cfg.read_text())['targets']) == 2
+        open_removal('Ziel 1')
+        app.click('Endpunkt entfernen')
+        assert eventually(lambda: 'Ziel' in app.labels())
+        app.expand('Sicherungsdetails')
+        assert '1' in app.labels()
+        assert tomllib.loads(app.cfg.read_text())['targets'] == [{'type': 'local', 'path': str(targets[1])}]
+
+        app.stop()
+        app.launch()
+        app.set_active('GtkSwitch', True)
+        assert eventually(lambda: any('Live-Sync aktiv' in label for label in app.labels()))
+        file.write_text('second backup')
+        assert eventually(lambda: copies[1].read_text() == 'second backup', 12)
+        assert app.idle()
+        assert [copy.read_text() for copy in copies] == ['first backup', 'second backup']
+        open_removal('Ziel')
+        app.click('Endpunkt entfernen')
+        assert eventually(lambda: 'Kein Endpunkt konfiguriert' in app.labels())
+        assert not app.find('GtkButton', 'Jetzt synchronisieren', mapped=False)['sensitive']
+        assert not tomllib.loads(app.cfg.read_text())['targets']
+        assert all(copy.is_file() for copy in copies)
+        record('UI-41', 'Remove an endpoint without deleting its backups', True,
+               'Cancel keeps both targets; after restart live sync updates only the remaining target',
+               'Removing the final endpoint disables sync and preserves both backups', evidence)
+    finally:
+        app.stop()
 
 
 
@@ -888,13 +1027,14 @@ def main():
                      'Widget activation/property changes, not physical mouse/keyboard or accessibility certification'])
     (OUT/'environment.json').write_text(json.dumps(metadata,indent=2,ensure_ascii=False))
     try:
-        for test in (onboarding,dashboard,endpoint_cards,missing_source,empty_targets):test()
+        for test in (onboarding,dashboard,endpoint_cards,missing_source,empty_targets,sync_status):test()
         empty_or_missing_home()
         unavailable_keyring()
         backup_mode()
         exclusion_settings()
         automatic_changes()
         folder_removal()
+        endpoint_removal()
         if BINARY:restore_ui()
         if BINARY:native_picker()
         if BINARY:native_header_layout()

@@ -8,6 +8,15 @@ use crate::{BackupFile, TransferControl};
 
 pub trait Backend {
     fn list(&self) -> io::Result<Vec<BackupFile>>;
+    /// Read the files directly in a target directory for a delta sync.
+    fn list_files(&self, parent: &Path, control: &TransferControl) -> io::Result<Vec<BackupFile>> {
+        control.checkpoint()?;
+        Ok(self
+            .list()?
+            .into_iter()
+            .filter(|file| file.path.parent() == Some(parent))
+            .collect())
+    }
     fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64>;
     fn test_connection(&self) -> io::Result<()>;
     fn mkdirs(&self, rel: &Path) -> io::Result<()>;
@@ -82,6 +91,31 @@ impl Backend for LocalBackend {
         }
         Ok(files)
     }
+
+    fn list_files(&self, parent: &Path, control: &TransferControl) -> io::Result<Vec<BackupFile>> {
+        let entries = if parent.as_os_str().is_empty() {
+            fs::read_dir(&self.root)
+        } else {
+            crate::restore::safe_path(&self.root, parent, false).and_then(fs::read_dir)
+        };
+        let entries = match entries {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            result => result?,
+        };
+        let mut files = Vec::new();
+        for entry in entries {
+            control.checkpoint()?;
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                files.push(BackupFile {
+                    path: parent.join(entry.file_name()),
+                    size: Some(entry.metadata()?.len()),
+                });
+            }
+        }
+        Ok(files)
+    }
+
     fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64> {
         let path = crate::restore::safe_path(&self.root, rel, false)?;
         io::copy(&mut File::open(path)?, writer)

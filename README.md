@@ -2,6 +2,8 @@
 
 Cloudsave ist eine Flatpak-Desktop-App für Linux, mit der du ausgewählte Ordner automatisch auf lokale Laufwerke oder ein WebDAV-Ziel sicherst, etwa eine **Hetzner Storage Box** oder Nextcloud.
 
+**[Cloudsave für Linux herunterladen (.flatpak, x86_64)](https://github.com/kilruna/Cloudsave/releases/latest/download/cloudsave-x86_64.flatpak)**
+
 **Die Idee in einem Satz:** Ordner anhaken → Ziel wählen → fertig. Cloudsave erkennt selbstständig, welche Dateien sich geändert haben, und lädt nur diese hoch – ressourcenschonend im Hintergrund.
 
 ## Schnell testen und Feedback geben
@@ -16,13 +18,14 @@ automatisch, bestehende Profile können weiterhin auf Spiegelung stehen.
 Voraussetzungen: Linux mit grafischer Sitzung, Flatpak und für WebDAV ein
 verfügbarer System-Schlüsselbund (GNOME Keyring oder KWallet mit Secret Service).
 
-1. Öffne die [Flatpak-Builds auf GitHub](https://github.com/kilruna/Cloudsave/actions/workflows/flatpak.yml?query=branch%3Avibe%2Fcloudsave-plan-1926b5) und wähle den neuesten **erfolgreichen** Lauf des Hauptbranches `vibe/cloudsave-plan-1926b5`.
-2. Lade unten unter **Artifacts** das Paket **cloudsave.flatpak** herunter. Dafür ist eine GitHub-Anmeldung erforderlich. Die Pakete bleiben 14 Tage verfügbar.
-3. Entpacke das ZIP und öffne ein Terminal im Ordner mit der Datei `cloudsave.flatpak`. Führe dort aus:
+Lade `cloudsave-x86_64.flatpak` über den Downloadlink oben herunter. Auf der
+[Release-Seite](https://github.com/kilruna/Cloudsave/releases/latest) findest du
+die Versionshinweise und die SHA-256-Prüfsumme.
+Öffne ein Terminal im Downloadordner und führe diese Befehle aus.
 
 ```bash
 flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-flatpak install --user --reinstall ./cloudsave.flatpak
+flatpak install --user --reinstall ./cloudsave-x86_64.flatpak
 flatpak run org.cloudsave.Cloudsave
 ```
 
@@ -34,6 +37,8 @@ Unter **Gesicherte Ordner** pausiert das Häkchen die Sicherung eines Ordners.
 Der Minus-Button entfernt ihn aus der Liste. Bei aktivem Live-Sync entfernt
 Cloudsave nach Bestätigung auch die zugeordneten Kopien an den Endpunkten.
 Die lokalen Originale bleiben erhalten.
+Der Minus-Button auf einer Zielkarte beendet die Sicherung an diesem Endpunkt.
+Vorhandene Sicherungskopien am Ziel bleiben erhalten.
 
 ### Kurzer Funktionstest
 
@@ -41,7 +46,7 @@ Die lokalen Originale bleiben erhalten.
 2. **Automatik:** Eine Testdatei ändern und die automatische Übertragung prüfen. Live-Sync startet normalerweise nach etwa drei Sekunden Ruhezeit. **Zusätzlicher Kontrollscan (Minuten)** fängt verpasste Dateisystemereignisse auf. Auto-Sync ausschalten: Weitere Änderungen dürfen erst nach **Jetzt synchronisieren** übertragen werden.
 3. **Ausschlüsse:** Unter Einstellungen **Dateien und Ordner ausschließen** öffnen und **Temporäre Dateien** anklicken; die Auswahl wird sofort gespeichert. Eine neue `.tmp`-Datei in der Quelle anlegen und **Jetzt synchronisieren** klicken. Diese Datei darf nicht im Ziel erscheinen. Weitere Gruppen erfassen Cache-Ordner, temporäre Ordner, System-Vorschaudateien und Entwicklungs-Caches. **Ordner auswählen …** übernimmt einen Unterordner aus einer Quelle; **Eigene Regel hinzufügen …** öffnet ein kleines Eingabefenster, etwa für `*.bak` oder `Projekte/Cache/**`. Regeln gelten für alle Quellen; vorhandene ausgeschlossene Sicherungen bleiben erhalten. Ohne Auswahl werden keine Standardregeln automatisch aktiviert.
 4. **Backup-Modus:** Eine bereits gesicherte Testdatei lokal löschen und synchronisieren. Im Backup-Modus bleibt ihre Sicherung erhalten. Den Spiegelungsmodus ausschließlich mit Testdaten ausprobieren; er gibt echte Dateilöschungen an das Ziel weiter.
-5. **Wiederherstellen:** Nach einer Neuinstallation auf dem Startbildschirm **Vorhandene Sicherung wiederherstellen** wählen und den Endpunkt verbinden. Auch die normale Einrichtung prüft den Endpunkt vor dem ersten Sync. Der Assistent bietet ganze Ordner **an den bisherigen Orten** oder **in einem separaten Ordner** an; einzelne Dateien müssen dafür nicht ausgewählt werden. Zielpfade prüfen und Wiederherstellung starten. Im Flatpak den Home-Ordner bei Bedarf einmal für Schreibzugriff über den Dialog bestätigen. Für einzelne Dateien bleibt **Sicherungen wiederherstellen → Sicherungen laden** im Dashboard verfügbar.
+5. **Wiederherstellen:** Nach einer Neuinstallation auf dem Startbildschirm **Vorhandene Sicherung wiederherstellen** wählen und den Endpunkt verbinden. Auch die normale Einrichtung prüft den Endpunkt vor dem ersten Sync. Der Assistent bietet ganze Ordner **an den bisherigen Orten** oder **in einem separaten Ordner** an; einzelne Dateien müssen dafür nicht ausgewählt werden. Zielpfade prüfen und Wiederherstellung starten. Im Flatpak den Home-Ordner bei Bedarf einmal für Schreibzugriff über den Dialog bestätigen. Für einzelne Dateien im Dashboard **Wiederherstellen** öffnen und bei Bedarf nach Dateiname oder Pfad suchen.
 6. **Optional WebDAV:** Mit einem Testverzeichnis auf dem Server wiederholen. Nach **App beenden** und Neustart müssen gespeicherte Zugangsdaten über den Schlüsselbund verfügbar sein; dieser muss gegebenenfalls entsperrt werden. Bei Hetzner müssen WebDAV und äußere Erreichbarkeit aktiviert sein. Subaccounts benötigen ihre eigene Domain, z. B. `https://uXXXXX-sub1.your-storagebox.de` zum Benutzer `uXXXXX-sub1`.
 
 ### Feedback melden
@@ -50,7 +55,7 @@ Erstelle ein [GitHub-Issue](https://github.com/kilruna/Cloudsave/issues/new), au
 unklare Bedienung oder Darstellungsprobleme. Diese Angaben helfen beim Nachstellen:
 
 ```text
-Build: Link zum verwendeten GitHub-Actions-Lauf
+Version: Link zum verwendeten GitHub-Release
 System: Distribution/Version, Desktop (GNOME/KDE/…), Wayland oder X11
 Sicherung: lokales Ziel oder WebDAV; Backup- oder Spiegelungsmodus
 Schritte: Was wurde nacheinander angeklickt/geändert?

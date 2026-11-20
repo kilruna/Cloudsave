@@ -229,6 +229,19 @@ fn webdav_backend_roundtrip_via_mock_server() {
         b"hallo webdav neu"
     );
 
+    fs::remove_dir_all(srv.join("base/quelle/unter")).unwrap();
+    fs::write(srv.join("base/quelle/a.txt"), b"truncated").unwrap();
+    let repaired = sync(&cfg, &state_path).unwrap();
+    assert_eq!(repaired.uploaded, 2, "{:?}", repaired.errors);
+    assert_eq!(
+        fs::read(srv.join("base/quelle/unter/b.txt")).unwrap(),
+        b"zwei"
+    );
+    assert_eq!(
+        fs::read(srv.join("base/quelle/a.txt")).unwrap(),
+        b"hallo webdav neu"
+    );
+
     fs::remove_file(src.join("unter/b.txt")).unwrap();
     let r = sync(&cfg, &state_path).unwrap();
     assert_eq!(r.deleted, 1);

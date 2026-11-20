@@ -244,6 +244,12 @@ pub fn set_auto_sync(enabled: bool) {
     state().auto_sync_paused = !enabled;
 }
 
+pub fn target_removed(target: &Target) {
+    let mut state = state();
+    state.failed_restores.retain(|entry| entry != target);
+    state.last_sync_succeeded = None;
+}
+
 enum Outcome<'a> {
     Sync(bool),
     Restore(&'a Target, bool),
@@ -376,6 +382,9 @@ pub fn sync(
     });
     let detail = match &result {
         Ok(report) if report.cancelled => format!("Abgebrochen · {} hochgeladen", report.uploaded),
+        Ok(report) if !report.attempted && report.errors.is_empty() => {
+            "Keine Ordner ausgewählt".into()
+        }
         Ok(report) => format!(
             "{} hochgeladen · {} gelöscht · {} unverändert · {} Fehler",
             report.uploaded,
@@ -389,7 +398,7 @@ pub fn sync(
         detail,
         match &result {
             Ok(report) if !report.errors.is_empty() => Some(Outcome::Sync(false)),
-            Ok(report) if report.cancelled => None,
+            Ok(report) if report.cancelled || !report.attempted => None,
             Ok(_) => Some(Outcome::Sync(true)),
             Err(_) => Some(Outcome::Sync(false)),
         },

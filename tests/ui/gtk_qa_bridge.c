@@ -41,6 +41,7 @@ FN(const char*,gtk_editable_get_text,(P));
 FN(T,gtk_editable_get_type,(void));
 FN(void,g_signal_emit_by_name,(P,const char*,...));
 FN(int,gtk_widget_activate,(P));
+FN(int,gtk_widget_grab_focus,(P));
 FN(void,gtk_window_close,(P));
 FN(void,gtk_drop_down_set_selected,(P,unsigned));
 FN(P,gtk_text_view_get_buffer,(P));
@@ -85,6 +86,7 @@ static int tick(P unused){
  else if(!strcmp(verb,"value")&&is(w,"GtkSpinButton"))gtk_spin_button_set_value(w,val?atof(val):0);
  else if(!strcmp(verb,"text")&&g_type_check_instance_is_a(w,gtk_editable_get_type()))gtk_editable_set_text(w,val?val:"");
  else if(!strcmp(verb,"activate"))ok=gtk_widget_activate(w);
+ else if(!strcmp(verb,"focus"))ok=gtk_widget_grab_focus(w);
  else if(!strcmp(verb,"close")&&is(w,"GtkWindow"))gtk_window_close(w);
  else ok=0;
  snprintf(out,sizeof(out),"%s/tree.tsv.tmp",dir);f=fopen(out,"w");if(f){tree(f);fclose(f);snprintf(path,sizeof(path),"%s/tree.tsv",dir);rename(out,path);}
@@ -94,6 +96,7 @@ static int tick(P unused){
 #define LOAD(n) do{*(void**)(&n)=dlsym(RTLD_DEFAULT,#n);if(!n)return;}while(0)
 __attribute__((constructor))static void init(void){
  const char*d=getenv("CLOUDSAVE_QA_DIR");if(!d)return;snprintf(dir,sizeof(dir),"%s",d);
+ LOAD(gtk_widget_grab_focus);
  LOAD(gtk_text_view_get_buffer);LOAD(gtk_text_buffer_set_text);LOAD(gtk_drop_down_set_selected);LOAD(g_timeout_add);LOAD(gtk_window_get_toplevels);LOAD(g_list_model_get_n_items);LOAD(g_list_model_get_item);LOAD(g_object_unref);LOAD(g_type_name_from_instance);LOAD(g_type_from_name);LOAD(g_type_check_instance_is_a);LOAD(gtk_widget_get_first_child);LOAD(gtk_widget_get_next_sibling);LOAD(gtk_widget_get_visible);LOAD(gtk_widget_get_mapped);LOAD(gtk_widget_is_sensitive);LOAD(gtk_widget_get_width);LOAD(gtk_widget_get_height);LOAD(gtk_label_get_text);LOAD(gtk_button_get_label);LOAD(gtk_check_button_get_active);LOAD(gtk_check_button_set_active);LOAD(gtk_switch_get_active);LOAD(gtk_switch_set_active);LOAD(gtk_spin_button_get_value);LOAD(gtk_spin_button_set_value);LOAD(gtk_editable_set_text);LOAD(gtk_editable_get_text);LOAD(gtk_editable_get_type);LOAD(g_signal_emit_by_name);LOAD(gtk_widget_activate);LOAD(gtk_window_close);
  g_timeout_add(50,tick,NULL);
 }
