@@ -38,10 +38,10 @@
         linear-gradient(115deg, #3d3022, #33251b 60%, #392619);
     border: 1px solid rgba(255, 173, 81, 0.55);
     border-radius: 18px;
-    padding: 20px 24px;
+    padding: 16px 20px;
     box-shadow: inset 0 1px rgba(255, 222, 176, 0.1), 0 4px 24px rgba(224, 102, 12, 0.09);
 }
-.sync-title { font-size: 26px; font-weight: 800; color: #fffaf5; }
+.sync-title { font-size: 23px; font-weight: 800; color: #fffaf5; }
 .sync-sub { font-size: 14px; color: #d2c3b6; }
 .status-symbol { color: #ffb66d; }
 .status-banner.success .status-symbol { color: #a4df8a; }
@@ -62,7 +62,8 @@
     box-shadow: inset 0 1px rgba(255, 239, 204, 0.35), 0 4px 25px rgba(255, 130, 22, 0.32);
 }
 .sync-btn {
-    font-size: 19px;
+    font-size: 15px;
+    padding: 9px 13px;
     background: linear-gradient(180deg, #ff9817, #d96b06 55%, #c85200);
 }
 .sync-btn:hover {
@@ -100,9 +101,7 @@ button:focus-visible, checkbutton:focus-visible, switch:focus-visible {
     border-radius: 17px;
     box-shadow: inset 0 1px rgba(255, 228, 203, 0.06), 0 4px 15px rgba(0, 0, 0, 0.1);
 }
-.stat-card { padding: 17px 22px; }
-.stat-icon { color: #f4bb80; }
-.stat-value { font-size: 27px; font-weight: 800; color: #fffaf5; }
+.stats { padding: 12px 18px; }
 .stat-caption { font-size: 13px; color: #c1b5aa; }
 .section-title { font-size: 21px; font-weight: 750; color: #fffaf5; }
 .panel { padding: 18px 22px; }
@@ -125,6 +124,9 @@ button.folder-remove:active { background: #3d2520; }
 .target-title { font-size: 18px; font-weight: 750; color: #fffaf5; }
 .target-sub { font-size: 13px; color: #c6b9ac; }
 .target-details { padding: 17px 0; }
+.target-result { font-size: 13px; color: #d2c3b6; }
+.target-result.success { color: #a4df8a; }
+.target-result.error { color: #ffad9a; }
 .sync-controls {
     padding: 14px 2px 0;
     border-top: 1px solid rgba(226, 204, 182, 0.16);
@@ -184,3 +186,10 @@ switch slider { background: #fff8f0; }
     border: 1px solid rgba(224, 191, 160, 0.25);
     background: linear-gradient(135deg, #39312b, #2a2622);
 }
+
+.restore-group {
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(123, 110, 97, 0.18);
+}
+.restore-group checkbutton { padding: 4px 0; }

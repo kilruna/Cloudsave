@@ -15,8 +15,24 @@ pub struct SyncReport {
     pub skipped: usize,
     pub bytes: u64,
     pub cancelled: bool,
+    pub attempted: bool,
     pub errors: Vec<String>,
+    pub targets: Vec<TargetSyncReport>,
     pub removed_folders: Vec<(PathBuf, Target)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetSyncReport {
+    pub target: Target,
+    pub unavailable: bool,
+    pub errors: Vec<String>,
+}
+
+impl SyncReport {
+    fn target_error(&mut self, index: usize, error: String) {
+        self.targets[index].errors.push(error.clone());
+        self.errors.push(error);
+    }
 }
 
 pub(crate) fn mtime_stamp(meta: &fs::Metadata) -> i64 {
@@ -85,31 +101,50 @@ fn sync_run(
             .push("Kein Endpunkt konfiguriert. Bitte einen Endpunkt hinzufügen.".into());
         return Ok(());
     }
-    for target in &config.targets {
+    report.attempted = config.has_sync_work();
+    if !report.attempted {
+        return Ok(());
+    }
+    report.targets = config
+        .targets
+        .iter()
+        .map(|target| TargetSyncReport {
+            target: target.clone(),
+            unavailable: false,
+            errors: Vec::new(),
+        })
+        .collect();
+    let mut blocked_targets = HashSet::new();
+    for (index, target) in config.targets.iter().enumerate() {
         control.checkpoint()?;
         if let Target::Local { path } = target {
-            let destination = crate::paths::resolved(path)?;
+            let destination = match crate::paths::resolved(path) {
+                Ok(path) => path,
+                Err(error) => {
+                    report.targets[index].unavailable = true;
+                    report.target_error(index, format!("{}: {error}", target_label(target)));
+                    blocked_targets.insert(index);
+                    continue;
+                }
+            };
             for folder in &config.folders {
                 control.checkpoint()?;
                 let source = crate::paths::resolved(folder)?;
                 if destination.starts_with(&source) || source.starts_with(&destination) {
-                    report.errors.push(format!("Quelle {} und Ziel {} überlappen sich. Bitte einen getrennten Sicherungsordner wählen.", folder.display(), path.display()));
+                    report.target_error(index, format!("Quelle {} und Ziel {} überlappen sich. Bitte einen getrennten Sicherungsordner wählen.", folder.display(), path.display()));
+                    blocked_targets.insert(index);
                 }
             }
         }
-    }
-    if !report.errors.is_empty() {
-        return Ok(());
     }
     let exclusions = crate::exclusions::Exclusions::new(&config.settings.exclude_patterns)?;
     let state = State::open(state_path)?;
 
     for removal in &config.settings.pending_folder_removals {
-        for target in removal
-            .targets
-            .iter()
-            .filter(|target| config.targets.contains(target))
-        {
+        for (index, target) in config.targets.iter().enumerate() {
+            if blocked_targets.contains(&index) || !removal.targets.contains(target) {
+                continue;
+            }
             control.checkpoint()?;
             progress(crate::Progress::RemovingFolder {
                 name: removal.namespace.clone(),
@@ -124,11 +159,14 @@ fn sync_run(
                 }
                 Err(error) => {
                     control.check_cancelled()?;
-                    report.errors.push(format!(
-                        "{} · Sicherungsordner {} entfernen: {error}",
-                        target_label(target),
-                        removal.namespace
-                    ));
+                    report.target_error(
+                        index,
+                        format!(
+                            "{} · Sicherungsordner {} entfernen: {error}",
+                            target_label(target),
+                            removal.namespace
+                        ),
+                    );
                 }
             }
         }
@@ -205,19 +243,22 @@ fn sync_run(
         }
     }
 
-    'targets: for target in &config.targets {
+    'targets: for (index, target) in config.targets.iter().enumerate() {
         control.checkpoint()?;
+        if blocked_targets.contains(&index) {
+            continue;
+        }
         let backend = match backend_for(target) {
             Ok(b) => b,
             Err(e) => {
-                report
-                    .errors
-                    .push(format!("{}: {}", target_label(target), e));
+                report.targets[index].unavailable = true;
+                report.target_error(index, format!("{}: {}", target_label(target), e));
                 continue;
             }
         };
         let prefix = target_prefix(target)?;
         let mut deletable_sources = complete_sources.clone();
+        let mut destination_files = HashMap::new();
         for (checked, (key, (abs, size, mtime))) in scanned.iter().enumerate() {
             control.checkpoint()?;
             progress(crate::Progress::Checking {
@@ -227,42 +268,82 @@ fn sync_run(
             let skey = format!("{}::{}", prefix, key);
             let source = &sources[key];
             if state.source(&skey)?.is_some_and(|owner| owner != *source) {
-                report.errors.push(format!(
-                    "{}: Quelle {} kollidiert mit vorhandener Sicherung {}",
-                    target_label(target),
-                    source.display(),
-                    key
-                ));
+                report.target_error(
+                    index,
+                    format!(
+                        "{}: Quelle {} kollidiert mit vorhandener Sicherung {}",
+                        target_label(target),
+                        source.display(),
+                        key
+                    ),
+                );
                 deletable_sources.remove(source);
                 continue;
             }
-            let unchanged = match state.get(&skey)? {
-                Some(entry) if entry.size == *size && entry.mtime == *mtime && *mtime != 0 => true,
+            let (unchanged, refresh_mtime) = match state.get(&skey)? {
+                Some(entry) if entry.size == *size && entry.mtime == *mtime && *mtime != 0 => {
+                    (true, false)
+                }
                 Some(entry) if entry.size == *size => match file_hash(abs, control) {
-                    Ok(hash) if hash == entry.hash => {
-                        // Touches and legacy second-based stamps do not require re-uploading identical data.
-                        state.upsert(&skey, *size, *mtime, &hash)?;
-                        true
-                    }
-                    Ok(_) => false,
+                    Ok(hash) if hash == entry.hash => (true, true),
+                    Ok(_) => (false, false),
                     Err(error) => {
                         control.check_cancelled()?;
                         deletable_sources.remove(source);
-                        report.errors.push(format!(
-                            "{} · Quelle {}: {error}",
-                            target_label(target),
-                            abs.display()
-                        ));
+                        report.target_error(
+                            index,
+                            format!(
+                                "{} · Quelle {}: {error}",
+                                target_label(target),
+                                abs.display()
+                            ),
+                        );
                         continue;
                     }
                 },
-                Some(_) => false,
-                None => false,
+                Some(_) | None => (false, false),
             };
             if unchanged {
-                state.set_source(&skey, source)?;
-                report.skipped += 1;
-                continue;
+                let relative = Path::new(key);
+                let parent = relative
+                    .parent()
+                    .expect("scanned files have a folder namespace");
+                let files = match destination_files.entry(parent) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        match backend.list_files(parent, control) {
+                            Ok(files) => entry.insert(
+                                files
+                                    .into_iter()
+                                    .map(|file| (file.path, file.size))
+                                    .collect::<HashMap<_, _>>(),
+                            ),
+                            Err(error) => {
+                                control.check_cancelled()?;
+                                report.target_error(
+                                    index,
+                                    format!(
+                                        "{} · Sicherung {} prüfen: {error}",
+                                        target_label(target),
+                                        parent.display()
+                                    ),
+                                );
+                                continue 'targets;
+                            }
+                        }
+                    }
+                };
+                if files
+                    .get(relative)
+                    .is_some_and(|length| length.is_none_or(|length| length == *size as u64))
+                {
+                    if refresh_mtime {
+                        state.update_mtime(&skey, *mtime)?;
+                    }
+                    state.set_source(&skey, source)?;
+                    report.skipped += 1;
+                    continue;
+                }
             }
             progress(crate::Progress::Uploading {
                 path: PathBuf::from(key),
@@ -283,13 +364,16 @@ fn sync_run(
                 Err(e) => {
                     control.check_cancelled()?;
                     deletable_sources.remove(source);
-                    report.errors.push(format!(
-                        "{} · Quelle {} · Datei {}: {}",
-                        target_label(target),
-                        source.display(),
-                        abs.display(),
-                        e
-                    ));
+                    report.target_error(
+                        index,
+                        format!(
+                            "{} · Quelle {} · Datei {}: {}",
+                            target_label(target),
+                            source.display(),
+                            abs.display(),
+                            e
+                        ),
+                    );
                     if retry::is_temporary(&e) {
                         continue 'targets;
                     }
@@ -302,13 +386,19 @@ fn sync_run(
             total: scanned.len(),
         });
         control.checkpoint()?;
-        if report.errors.is_empty() && !config.folders.is_empty() {
+        if report.targets[index].errors.is_empty()
+            && !config.folders.is_empty()
+            && complete_sources.len() == config.folders.len()
+        {
             if let Err(error) = crate::recovery::save_catalog(&*backend, config, control) {
                 control.check_cancelled()?;
-                report.errors.push(format!(
-                    "{} · Ordnerzuordnung speichern: {error}",
-                    target_label(target)
-                ));
+                report.target_error(
+                    index,
+                    format!(
+                        "{} · Ordnerzuordnung speichern: {error}",
+                        target_label(target)
+                    ),
+                );
             }
         }
         if config.settings.sync_mode == crate::SyncMode::Backup {
@@ -337,9 +427,10 @@ fn sync_run(
                         }
                         Err(e) => {
                             control.check_cancelled()?;
-                            report
-                                .errors
-                                .push(format!("{} · löschen {rel}: {e}", target_label(target)));
+                            report.target_error(
+                                index,
+                                format!("{} · löschen {rel}: {e}", target_label(target)),
+                            );
                             if retry::is_temporary(&e) {
                                 continue 'targets;
                             }
@@ -350,6 +441,10 @@ fn sync_run(
         }
     }
 
+    control.check_cancelled()?;
+    if report.errors.is_empty() && !config.folders.is_empty() {
+        state.record_successful_sync(&config.targets)?;
+    }
     Ok(())
 }
 

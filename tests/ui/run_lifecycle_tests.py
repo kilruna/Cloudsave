@@ -372,8 +372,8 @@ def main():
     destination = app.root/'restored'; destination.mkdir()
     app.write_config([], [backup])
     try:
-        app.launch(); app.click('Sicherungen wiederherstellen'); app.click('Sicherungen laden')
-        eventually(lambda: any('1 Sicherungsdatei(en)' in label for label in app.labels()))
+        app.launch(); app.click('Wiederherstellen')
+        eventually(lambda: any('1 Sicherungsdatei gefunden' in label for label in app.labels()))
         app.set_active('GtkCheckButton', True)
         app.click('Wiederherstellungsordner wählen …')
         ui.run('xdotool','key','ctrl+l'); time.sleep(.2)
