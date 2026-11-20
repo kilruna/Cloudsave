@@ -30,6 +30,6 @@
     <binary>cloudsave</binary>
   </provides>
   <releases>
-    <release version="0.1.0" date="2026-11-15"/>
+    <release version="0.1.0" date="2026-11-20"/>
   </releases>
 </component>
