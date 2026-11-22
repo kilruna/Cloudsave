@@ -630,8 +630,12 @@ fn upload_pending(
                     let _ = tx.send(UploadMsg::Skipped);
                     continue;
                 }
-                let _ = tx.send(UploadMsg::Started(i));
                 let task = &pending[i];
+                // Announce the file only once its transfer has actually begun, so
+                // the progress label always names a file that is really uploading.
+                let started = || {
+                    let _ = tx.send(UploadMsg::Started(i));
+                };
                 let result = upload_one(
                     backend,
                     Path::new(&task.key),
@@ -639,6 +643,7 @@ fn upload_pending(
                     task.size,
                     task.mtime,
                     control,
+                    &started,
                 );
                 let _ = tx.send(UploadMsg::Done(i, result));
             });
@@ -716,6 +721,7 @@ fn upload_one(
     size: i64,
     mtime: i64,
     control: &TransferControl,
+    started: &dyn Fn(),
 ) -> std::io::Result<(u64, String)> {
     retry::run(control, || backend.mkdirs(rel))?;
     // Hash while uploading: the source file is read once, not twice.
@@ -734,6 +740,7 @@ fn upload_one(
             ));
         }
         let _transfer = control.begin_file(rel, Some(size as u64));
+        started();
         let body: Box<dyn Read + Send> = Box::new(HashingReader {
             inner: file,
             hasher: hash_reader.clone(),
