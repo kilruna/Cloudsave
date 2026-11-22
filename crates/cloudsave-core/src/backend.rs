@@ -1,12 +1,13 @@
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::config::Target;
 use crate::webdav::WebdavBackend;
 use crate::{BackupFile, TransferControl};
 
-pub trait Backend {
+/// `Sync` allows the sync engine to run a bounded pool of transfers over one backend.
+pub trait Backend: Sync {
     fn list(&self) -> io::Result<Vec<BackupFile>>;
     /// Read the files directly in a target directory for a delta sync.
     fn list_files(&self, parent: &Path, control: &TransferControl) -> io::Result<Vec<BackupFile>> {
@@ -20,17 +21,18 @@ pub trait Backend {
     fn download(&self, rel: &Path, writer: &mut dyn Write) -> io::Result<u64>;
     fn test_connection(&self) -> io::Result<()>;
     fn mkdirs(&self, rel: &Path) -> io::Result<()>;
-    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64>;
+    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
+        self.put_controlled(rel, Box::new(file), size, &TransferControl::default())
+    }
+    /// The body is usually wrapped in a hashing reader by the caller; byte
+    /// measurement binds to the transfer started for `rel`.
     fn put_controlled(
         &self,
         rel: &Path,
-        file: File,
+        body: Box<dyn Read + Send>,
         size: u64,
         control: &TransferControl,
-    ) -> io::Result<u64> {
-        control.check_cancelled()?;
-        self.put(rel, file, size)
-    }
+    ) -> io::Result<u64>;
     fn delete(&self, rel: &Path) -> io::Result<()>;
     /// List all files in a specific managed folder, with paths relative to the endpoint.
     fn list_folder(
@@ -140,14 +142,10 @@ impl Backend for LocalBackend {
         Ok(())
     }
 
-    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
-        self.put_controlled(rel, file, size, &TransferControl::default())
-    }
-
     fn put_controlled(
         &self,
         rel: &Path,
-        file: File,
+        body: Box<dyn Read + Send>,
         size: u64,
         control: &TransferControl,
     ) -> io::Result<u64> {
@@ -163,7 +161,7 @@ impl Backend for LocalBackend {
             .prefix(".cloudsave-upload-")
             .suffix(".part")
             .tempfile_in(parent)?;
-        let written = io::copy(&mut control.reader(file, true), &mut out)?;
+        let written = io::copy(&mut control.reader_for(rel, body, true), &mut out)?;
         if written != size {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,

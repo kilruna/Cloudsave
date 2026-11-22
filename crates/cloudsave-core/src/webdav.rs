@@ -1,9 +1,9 @@
 use crate::{BackupFile, TransferControl};
 use std::collections::{HashSet, VecDeque};
-use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::backend::Backend;
@@ -15,6 +15,8 @@ pub struct WebdavBackend {
     base: String,
     user: String,
     password: String,
+    /// Directory prefixes already created (or confirmed to exist) on this server.
+    dirs: Mutex<HashSet<String>>,
 }
 
 fn request_error(error: reqwest::Error) -> io::Error {
@@ -132,6 +134,7 @@ impl WebdavBackend {
             base,
             user: user.to_string(),
             password: password.to_string(),
+            dirs: Mutex::new(HashSet::new()),
         })
     }
 
@@ -329,11 +332,21 @@ impl Backend for WebdavBackend {
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect();
+        let mut prefixes = Vec::with_capacity(comps.len().saturating_sub(1));
         let mut acc = String::new();
         for c in comps.iter().take(comps.len().saturating_sub(1)) {
             acc.push('/');
             acc.push_str(&url_encode_segment(c));
-            let url = format!("{}{}", self.base, acc);
+            prefixes.push(acc.clone());
+        }
+        // Hold the lock across the requests so parallel uploads create each
+        // directory exactly once instead of racing duplicate MKCOLs.
+        let mut ensured = self.dirs.lock().unwrap_or_else(|error| error.into_inner());
+        for prefix in &prefixes {
+            if ensured.contains(prefix) {
+                continue;
+            }
+            let url = format!("{}{}", self.base, prefix);
             let method = reqwest::Method::from_bytes(b"MKCOL")
                 .map_err(|e| io::Error::other(e.to_string()))?;
             let resp = self.request(method, &url).send().map_err(request_error)?;
@@ -344,18 +357,15 @@ impl Backend for WebdavBackend {
                     format!("MKCOL {url} -> HTTP {st}"),
                 ));
             }
+            ensured.insert(prefix.clone());
         }
         Ok(())
-    }
-
-    fn put(&self, rel: &Path, file: File, size: u64) -> io::Result<u64> {
-        self.put_controlled(rel, file, size, &TransferControl::default())
     }
 
     fn put_controlled(
         &self,
         rel: &Path,
-        file: File,
+        body: Box<dyn Read + Send>,
         size: u64,
         control: &TransferControl,
     ) -> io::Result<u64> {
@@ -365,7 +375,7 @@ impl Backend for WebdavBackend {
         let token: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
         let temporary = rel.with_file_name(format!(".cloudsave-upload-{token}.part"));
         let url = self.url_for(&temporary);
-        let body = reqwest::blocking::Body::sized(control.reader(file, true), size);
+        let body = reqwest::blocking::Body::sized(control.reader_for(rel, body, true), size);
         let resp = self
             .request(reqwest::Method::PUT, &url)
             .header(reqwest::header::IF_NONE_MATCH, "*")

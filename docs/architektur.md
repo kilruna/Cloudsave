@@ -14,6 +14,11 @@ WebDAV verwendet exklusiven temporären PUT und MOVE. Der Backup-Modus erhält l
 entfernte Dateien; Spiegelung löscht nur nach vollständigem erfolgreichem Quellscan.
 Ausschlüsse werden auch vor Löschentscheidungen beachtet.
 
+Pro Endpunkt laufen Ziel-Listings und Uploads mit begrenzter Parallelität (4 Worker);
+State-Updates, Fortschritt und Fehlerbericht bleiben auf dem aufrufenden Thread. WebDAV
+legt jedes Verzeichnis pro Sync-Lauf nur einmal per MKCOL an, und der State schreibt
+in WAL-Modus, damit der Abgleich vieler Dateien kein fsync pro Datei mehr kostet.
+
 `Backend::list` und `Backend::download` ermöglichen Wiederherstellung von lokalen
 und WebDAV-Zielen. DAV-Listen werden rekursiv mit Depth 1 innerhalb desselben
 Origins/Zielpfads eingelesen. Downloads verwenden Tempdateien und

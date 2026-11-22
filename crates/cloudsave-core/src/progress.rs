@@ -56,7 +56,8 @@ struct Control {
 #[derive(Default)]
 struct TransferState {
     status: TransferStatus,
-    file: Option<Measurement>,
+    // Keyed by path, so parallel transfers each measure their own file.
+    files: Vec<Measurement>,
     retry: Option<(u8, Instant)>,
 }
 
@@ -74,7 +75,7 @@ impl TransferControl {
 
     pub fn progress(&self) -> Option<TransferProgress> {
         let state = self.0.state.lock().unwrap();
-        let file = state.file.as_ref()?;
+        let file = state.files.last()?;
         Some(TransferProgress {
             path: file.path.clone(),
             bytes: file.bytes.load(Ordering::Relaxed),
@@ -159,7 +160,9 @@ impl TransferControl {
 
     pub(crate) fn begin_file(&self, path: &Path, total: Option<u64>) -> FileTransfer<'_> {
         let bytes = Arc::new(AtomicU64::new(0));
-        self.0.state.lock().unwrap().file = Some(Measurement {
+        let mut state = self.0.state.lock().unwrap();
+        state.files.retain(|file| file.path != path);
+        state.files.push(Measurement {
             path: path.to_path_buf(),
             total,
             started: Instant::now(),
@@ -167,6 +170,7 @@ impl TransferControl {
         });
         FileTransfer {
             control: self,
+            path: path.to_path_buf(),
             bytes,
         }
     }
@@ -177,8 +181,30 @@ impl TransferControl {
                 .state
                 .lock()
                 .unwrap()
-                .file
-                .as_ref()
+                .files
+                .last()
+                .map(|file| file.bytes.clone())
+        } else {
+            None
+        };
+        TransferReader {
+            reader,
+            control: self.clone(),
+            bytes,
+        }
+    }
+
+    /// Bind byte measurement to the transfer started for `path`, even while
+    /// other transfers run in parallel.
+    pub(crate) fn reader_for<R>(&self, path: &Path, reader: R, measure: bool) -> TransferReader<R> {
+        let bytes = if measure {
+            self.0
+                .state
+                .lock()
+                .unwrap()
+                .files
+                .iter()
+                .find(|file| file.path == path)
                 .map(|file| file.bytes.clone())
         } else {
             None
@@ -193,6 +219,7 @@ impl TransferControl {
 
 pub(crate) struct FileTransfer<'a> {
     control: &'a TransferControl,
+    path: PathBuf,
     bytes: Arc<AtomicU64>,
 }
 
@@ -208,7 +235,13 @@ impl FileTransfer<'_> {
 
 impl Drop for FileTransfer<'_> {
     fn drop(&mut self) {
-        self.control.0.state.lock().unwrap().file.take();
+        self.control
+            .0
+            .state
+            .lock()
+            .unwrap()
+            .files
+            .retain(|file| file.path != self.path);
     }
 }
 

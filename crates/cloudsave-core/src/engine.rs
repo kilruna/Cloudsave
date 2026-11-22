@@ -1,7 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
 
 use crate::backend::{backend_for, Backend};
 use crate::config::{Config, Target};
@@ -33,6 +36,21 @@ impl SyncReport {
         self.targets[index].errors.push(error.clone());
         self.errors.push(error);
     }
+}
+
+/// Bounded parallelism for listings and uploads; WebDAV servers such as Hetzner
+/// allow roughly ten concurrent connections, so stay well below that.
+const TRANSFER_WORKERS: usize = 4;
+
+struct FileTask {
+    skey: String,
+    key: String,
+    abs: PathBuf,
+    size: i64,
+    mtime: i64,
+    source: PathBuf,
+    owner: Option<PathBuf>,
+    refresh_mtime: bool,
 }
 
 pub(crate) fn mtime_stamp(meta: &fs::Metadata) -> i64 {
@@ -258,7 +276,14 @@ fn sync_run(
         };
         let prefix = target_prefix(target)?;
         let mut deletable_sources = complete_sources.clone();
-        let mut destination_files = HashMap::new();
+
+        // Phase 1: classify every scanned file against the persisted state. The
+        // destination listings and uploads are batched afterwards so they can run
+        // with bounded parallelism instead of one request per file.
+        let mut verify: Vec<FileTask> = Vec::new();
+        let mut pending: Vec<FileTask> = Vec::new();
+        let mut needed_parents: Vec<PathBuf> = Vec::new();
+        let mut seen_parents = HashSet::new();
         for (checked, (key, (abs, size, mtime))) in scanned.iter().enumerate() {
             control.checkpoint()?;
             progress(crate::Progress::Checking {
@@ -267,7 +292,8 @@ fn sync_run(
             });
             let skey = format!("{}::{}", prefix, key);
             let source = &sources[key];
-            if state.source(&skey)?.is_some_and(|owner| owner != *source) {
+            let owner = state.source(&skey)?;
+            if owner.as_ref().is_some_and(|owner| *owner != *source) {
                 report.target_error(
                     index,
                     format!(
@@ -303,81 +329,122 @@ fn sync_run(
                 },
                 Some(_) | None => (false, false),
             };
+            let task = FileTask {
+                skey,
+                key: key.clone(),
+                abs: abs.clone(),
+                size: *size,
+                mtime: *mtime,
+                source: source.clone(),
+                owner,
+                refresh_mtime,
+            };
             if unchanged {
-                let relative = Path::new(key);
-                let parent = relative
+                let parent = Path::new(key)
                     .parent()
-                    .expect("scanned files have a folder namespace");
-                let files = match destination_files.entry(parent) {
-                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        match backend.list_files(parent, control) {
-                            Ok(files) => entry.insert(
+                    .expect("scanned files have a folder namespace")
+                    .to_path_buf();
+                if seen_parents.insert(parent.clone()) {
+                    needed_parents.push(parent);
+                }
+                verify.push(task);
+            } else {
+                pending.push(task);
+            }
+        }
+
+        // Phase 2: read the destination folders holding unchanged candidates in
+        // parallel; one listing per folder, not one per file.
+        let mut destination_files: HashMap<PathBuf, HashMap<PathBuf, Option<u64>>> = HashMap::new();
+        let mut listing_failed = false;
+        if !needed_parents.is_empty() {
+            let queue = Mutex::new(VecDeque::from(needed_parents.clone()));
+            let (tx, rx) = mpsc::channel();
+            let workers = TRANSFER_WORKERS.min(needed_parents.len());
+            std::thread::scope(|scope| -> Result<()> {
+                for _ in 0..workers {
+                    let queue = &queue;
+                    let tx = &tx;
+                    let backend = &*backend;
+                    scope.spawn(move || {
+                        while let Some(parent) = queue
+                            .lock()
+                            .unwrap_or_else(|error| error.into_inner())
+                            .pop_front()
+                        {
+                            if control.is_cancelled() {
+                                break;
+                            }
+                            let listed = backend.list_files(&parent, control);
+                            if tx.send((parent, listed)).is_err() {
+                                break;
+                            }
+                        }
+                    });
+                }
+                let mut remaining = needed_parents.len();
+                while remaining > 0 {
+                    match rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok((parent, Ok(files))) => {
+                            destination_files.insert(
+                                parent,
                                 files
                                     .into_iter()
                                     .map(|file| (file.path, file.size))
-                                    .collect::<HashMap<_, _>>(),
-                            ),
-                            Err(error) => {
-                                control.check_cancelled()?;
-                                report.target_error(
-                                    index,
-                                    format!(
-                                        "{} · Sicherung {} prüfen: {error}",
-                                        target_label(target),
-                                        parent.display()
-                                    ),
-                                );
-                                continue 'targets;
-                            }
+                                    .collect(),
+                            );
+                            remaining -= 1;
                         }
-                    }
-                };
-                if files
-                    .get(relative)
-                    .is_some_and(|length| length.is_none_or(|length| length == *size as u64))
-                {
-                    if refresh_mtime {
-                        state.update_mtime(&skey, *mtime)?;
-                    }
-                    state.set_source(&skey, source)?;
-                    report.skipped += 1;
-                    continue;
-                }
-            }
-            progress(crate::Progress::Uploading {
-                path: PathBuf::from(key),
-                target: target_label(target),
-            });
-            match upload_one(
-                &*backend,
-                Path::new(key),
-                &(abs.clone(), *size, *mtime),
-                control,
-            ) {
-                Ok((written, hash)) => {
-                    state.upsert(&skey, *size, *mtime, &hash)?;
-                    state.set_source(&skey, source)?;
-                    report.uploaded += 1;
-                    report.bytes += written;
-                }
-                Err(e) => {
-                    control.check_cancelled()?;
-                    deletable_sources.remove(source);
-                    report.target_error(
-                        index,
-                        format!(
-                            "{} · Quelle {} · Datei {}: {}",
-                            target_label(target),
-                            source.display(),
-                            abs.display(),
-                            e
-                        ),
-                    );
-                    if retry::is_temporary(&e) {
-                        continue 'targets;
+                        Ok((parent, Err(error))) => {
+                            control.check_cancelled()?;
+                            report.target_error(
+                                index,
+                                format!(
+                                    "{} · Sicherung {} prüfen: {error}",
+                                    target_label(target),
+                                    parent.display()
+                                ),
+                            );
+                            listing_failed = true;
+                            remaining -= 1;
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            control.check_cancelled()?;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
                     }
                 }
+                Ok(())
+            })?;
+        }
+        if listing_failed {
+            continue 'targets;
+        }
+
+        // Phase 3: confirm the unchanged candidates against the listings; missing
+        // copies join the upload queue.
+        for task in verify {
+            control.checkpoint()?;
+            let relative = Path::new(&task.key);
+            let parent = relative
+                .parent()
+                .expect("scanned files have a folder namespace");
+            let Some(files) = destination_files.get(parent) else {
+                continue;
+            };
+            if files
+                .get(relative)
+                .is_some_and(|length| length.is_none_or(|length| length == task.size as u64))
+            {
+                if task.refresh_mtime {
+                    state.update_mtime(&task.skey, task.mtime)?;
+                }
+                if task.owner.as_ref() != Some(&task.source) {
+                    state.set_source(&task.skey, &task.source)?;
+                }
+                report.skipped += 1;
+            } else {
+                pending.push(task);
             }
         }
 
@@ -386,6 +453,20 @@ fn sync_run(
             total: scanned.len(),
         });
         control.checkpoint()?;
+
+        // Phase 4: upload the queue with a bounded worker pool.
+        let mut ctx = TargetCtx {
+            target,
+            index,
+            state: &state,
+            control,
+            progress: &mut progress,
+            report,
+            deletable_sources: &mut deletable_sources,
+        };
+        if upload_pending(&*backend, &mut ctx, &pending)? {
+            continue 'targets;
+        }
         if report.targets[index].errors.is_empty()
             && !config.folders.is_empty()
             && complete_sources.len() == config.folders.len()
@@ -501,26 +582,177 @@ fn remove_backup_folder(
     )
 }
 
+enum UploadMsg {
+    Started(usize),
+    Skipped,
+    Done(usize, std::io::Result<(u64, String)>),
+}
+
+/// Mutable per-target state shared by the upload pool's calling thread.
+struct TargetCtx<'a> {
+    target: &'a Target,
+    index: usize,
+    state: &'a State,
+    control: &'a TransferControl,
+    progress: &'a mut dyn FnMut(crate::Progress),
+    report: &'a mut SyncReport,
+    deletable_sources: &'a mut HashSet<PathBuf>,
+}
+
+/// Upload the queued files with a bounded worker pool. State updates, progress
+/// and the report stay on the calling thread. Returns true when a temporary
+/// error aborted the rest of the target.
+fn upload_pending(
+    backend: &dyn Backend,
+    ctx: &mut TargetCtx,
+    pending: &[FileTask],
+) -> Result<bool> {
+    if pending.is_empty() {
+        return Ok(false);
+    }
+    let queue = Mutex::new(VecDeque::from_iter(0..pending.len()));
+    let (tx, rx) = mpsc::channel();
+    let stop = AtomicBool::new(false);
+    let workers = TRANSFER_WORKERS.min(pending.len());
+    let control = ctx.control;
+    std::thread::scope(|scope| -> Result<bool> {
+        for _ in 0..workers {
+            let queue = &queue;
+            let tx = &tx;
+            let stop = &stop;
+            scope.spawn(move || loop {
+                let next = queue
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .pop_front();
+                let Some(i) = next else { break };
+                if stop.load(Ordering::Relaxed) || control.is_cancelled() {
+                    let _ = tx.send(UploadMsg::Skipped);
+                    continue;
+                }
+                let task = &pending[i];
+                // Announce the file only once its transfer has actually begun, so
+                // the progress label always names a file that is really uploading.
+                let started = || {
+                    let _ = tx.send(UploadMsg::Started(i));
+                };
+                let result = upload_one(
+                    backend,
+                    Path::new(&task.key),
+                    &task.abs,
+                    task.size,
+                    task.mtime,
+                    control,
+                    &started,
+                );
+                let _ = tx.send(UploadMsg::Done(i, result));
+            });
+        }
+        let mut outstanding = pending.len();
+        let mut abort = false;
+        while outstanding > 0 {
+            match rx.recv() {
+                Ok(UploadMsg::Skipped) => outstanding -= 1,
+                Ok(UploadMsg::Started(i)) => {
+                    (ctx.progress)(crate::Progress::Uploading {
+                        path: PathBuf::from(&pending[i].key),
+                        target: target_label(ctx.target),
+                    });
+                }
+                Ok(UploadMsg::Done(i, result)) => {
+                    outstanding -= 1;
+                    let task = &pending[i];
+                    match result {
+                        Ok((written, hash)) => {
+                            ctx.state.upsert(&task.skey, task.size, task.mtime, &hash)?;
+                            if task.owner.as_ref() != Some(&task.source) {
+                                ctx.state.set_source(&task.skey, &task.source)?;
+                            }
+                            ctx.report.uploaded += 1;
+                            ctx.report.bytes += written;
+                        }
+                        Err(error) => {
+                            control.check_cancelled()?;
+                            ctx.deletable_sources.remove(&task.source);
+                            ctx.report.target_error(
+                                ctx.index,
+                                format!(
+                                    "{} · Quelle {} · Datei {}: {}",
+                                    target_label(ctx.target),
+                                    task.source.display(),
+                                    task.abs.display(),
+                                    error
+                                ),
+                            );
+                            if retry::is_temporary(&error) {
+                                stop.store(true, Ordering::Relaxed);
+                                abort = true;
+                            }
+                        }
+                    }
+                }
+                Err(mpsc::RecvError) => break,
+            }
+        }
+        Ok(abort)
+    })
+}
+
+struct HashingReader<R> {
+    inner: R,
+    hasher: Arc<Mutex<blake3::Hasher>>,
+}
+
+impl<R: Read> Read for HashingReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.hasher
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .update(&buffer[..read]);
+        Ok(read)
+    }
+}
+
 fn upload_one(
     backend: &dyn Backend,
     rel: &Path,
-    file: &(PathBuf, i64, i64),
+    abs: &Path,
+    size: i64,
+    mtime: i64,
     control: &TransferControl,
+    started: &dyn Fn(),
 ) -> std::io::Result<(u64, String)> {
-    let (abs, size, mtime) = file;
     retry::run(control, || backend.mkdirs(rel))?;
-    let hash = file_hash(abs, control)?;
+    // Hash while uploading: the source file is read once, not twice.
+    let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
+    let hash_reader = hasher.clone();
     let written = retry::run(control, || {
+        hash_reader
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .reset();
         let file = fs::File::open(abs)?;
         let metadata = file.metadata()?;
-        if metadata.len() != *size as u64 || (*mtime != 0 && mtime_stamp(&metadata) != *mtime) {
+        if metadata.len() != size as u64 || (mtime != 0 && mtime_stamp(&metadata) != mtime) {
             return Err(std::io::Error::other(
                 "Quelldatei wurde während der Sicherung geändert",
             ));
         }
-        let _transfer = control.begin_file(rel, Some(*size as u64));
-        backend.put_controlled(rel, file, *size as u64, control)
+        let _transfer = control.begin_file(rel, Some(size as u64));
+        started();
+        let body: Box<dyn Read + Send> = Box::new(HashingReader {
+            inner: file,
+            hasher: hash_reader.clone(),
+        });
+        backend.put_controlled(rel, body, size as u64, control)
     })?;
+    let hash = hasher
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .finalize()
+        .to_hex()
+        .to_string();
     Ok((written, hash))
 }
 

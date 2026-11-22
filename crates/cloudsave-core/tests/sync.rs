@@ -711,3 +711,47 @@ fn update_keeps_previously_unchecked_folders_available_for_explicit_removal() {
     assert_eq!(restarted.settings.disabled_folders, Some(vec![]));
     assert!(target.join("source/file").exists());
 }
+
+#[test]
+fn many_files_upload_in_parallel_and_stay_consistent_in_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("quelle");
+    let dst = tmp.path().join("ziel");
+    let state_path = tmp.path().join("state.db");
+    let mut expected = Vec::new();
+    for dir in ["", "a", "a/b", "a/b/c", "d"] {
+        let dir_path = src.join(dir);
+        fs::create_dir_all(&dir_path).unwrap();
+        for i in 0..10 {
+            let name = if dir.is_empty() {
+                format!("file-{i}.txt")
+            } else {
+                format!("{dir}/file-{i}.txt")
+            };
+            let content = format!("inhalt {dir} {i}").into_bytes();
+            fs::write(src.join(&name), &content).unwrap();
+            expected.push((name, content));
+        }
+    }
+    let cfg = make_config(&src, &dst);
+    let r = sync(&cfg, &state_path).unwrap();
+    assert_eq!(r.uploaded, 50, "errors: {:?}", r.errors);
+    assert!(r.errors.is_empty());
+    for (name, content) in &expected {
+        assert_eq!(&fs::read(dst.join("quelle").join(name)).unwrap(), content);
+    }
+
+    let r = sync(&cfg, &state_path).unwrap();
+    assert_eq!((r.uploaded, r.skipped), (0, 50), "errors: {:?}", r.errors);
+    assert_eq!(State::open(&state_path).unwrap().count().unwrap(), 50);
+
+    fs::write(src.join("a/b/file-3.txt"), b"geaendert").unwrap();
+    fs::remove_file(src.join("d/file-0.txt")).unwrap();
+    let r = sync(&cfg, &state_path).unwrap();
+    assert_eq!((r.uploaded, r.skipped, r.deleted), (1, 48, 1));
+    assert_eq!(
+        fs::read(dst.join("quelle/a/b/file-3.txt")).unwrap(),
+        b"geaendert"
+    );
+    assert!(!dst.join("quelle/d/file-0.txt").exists());
+}

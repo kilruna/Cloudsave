@@ -184,7 +184,12 @@ fn write_catalog(
         file.write_all(text.as_bytes())?;
         use std::io::Seek;
         file.rewind()?;
-        backend.put_controlled(Path::new(CATALOG), file, text.len() as u64, control)
+        backend.put_controlled(
+            Path::new(CATALOG),
+            Box::new(file),
+            text.len() as u64,
+            control,
+        )
     })?;
     Ok(())
 }
