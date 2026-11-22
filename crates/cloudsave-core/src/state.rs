@@ -93,7 +93,6 @@ impl State {
         // WAL keeps the per-file bookkeeping of a large sync cheap: commits append
         // to the log instead of fsyncing per row, and readers never block writers.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        conn.busy_timeout(Duration::from_millis(500))?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY,
@@ -120,6 +119,10 @@ impl State {
             )",
             [],
         )?;
+        // Probe the write lock once (rusqlite waits out its busy timeout): while
+        // another process holds the database, a sync then waits visibly instead of
+        // failing instantly, as it did before the WAL switch.
+        conn.execute_batch("BEGIN IMMEDIATE; COMMIT;")?;
         Ok(State { conn })
     }
 
