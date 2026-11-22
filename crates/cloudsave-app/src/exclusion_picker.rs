@@ -205,10 +205,9 @@ pub fn build(window: &gtk::Window, config: Rc<RefCell<Config>>) -> gtk::Box {
     title.set_xalign(0.0);
     root.append(&title);
     let menu = gtk::MenuButton::new();
-    menu.add_css_class("exclusion-select");
     root.append(&menu);
     let hint = gtk::Label::new(Some("Standardregeln anklicken oder eigene hinzufügen. Regeln gelten für alle Quellordner; vorhandene Sicherungen bleiben erhalten."));
-    hint.add_css_class("dim-label");
+    hint.add_css_class("supporting-text");
     hint.set_wrap(true);
     hint.set_xalign(0.0);
     root.append(&hint);
@@ -240,7 +239,7 @@ pub fn build(window: &gtk::Window, config: Rc<RefCell<Config>>) -> gtk::Box {
         title.set_xalign(0.0);
         labels.append(&title);
         let detail = gtk::Label::new(Some(&rules.join(", ")));
-        detail.add_css_class("dim-label");
+        detail.add_css_class("supporting-text");
         detail.set_xalign(0.0);
         detail.set_wrap(true);
         detail.set_max_width_chars(32);
@@ -369,6 +368,7 @@ fn manual_dialog(window: &gtk::Window, picker: &Rc<Picker>) {
     actions.append(&cancel);
     let add = gtk::Button::with_label("Regel hinzufügen");
     add.add_css_class("suggested-action");
+    add.add_css_class("primary-action");
     add.set_sensitive(false);
     actions.append(&add);
     content.append(&actions);

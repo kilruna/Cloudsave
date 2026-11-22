@@ -182,7 +182,7 @@ pub fn page(
     }));
     mode_hint.set_wrap(true);
     mode_hint.set_xalign(0.0);
-    mode_hint.add_css_class("dim-label");
+    mode_hint.add_css_class("supporting-text");
     content.append(&mode_hint);
     let choose = gtk::Button::with_label("Separaten Ordner wählen …");
     choose.set_visible(false);
@@ -252,6 +252,7 @@ pub fn page(
     content.append(&status);
     let start = gtk::Button::with_label("Ausgewählte Ordner wiederherstellen");
     start.add_css_class("suggested-action");
+    start.add_css_class("primary-action");
     content.append(&start);
     let state = Rc::new(Selection {
         folders: rows,
@@ -414,7 +415,9 @@ pub fn page(
                             child = widget.next_sibling();
                         }
                         if let Some(status) = state.status.upgrade() { status.set_sensitive(true); }
-                        let done = gtk::Button::with_label("Zur Übersicht"); done.add_css_class("suggested-action");
+                        let done = gtk::Button::with_label("Zur Übersicht");
+                        done.add_css_class("suggested-action");
+                        done.add_css_class("primary-action");
                         let window = window.clone(); let nav = nav.clone();
                         done.connect_clicked(move |_| crate::onboarding::show_dashboard(&window, &nav, &config, config.settings.auto_sync)); content.append(&done);
                     }

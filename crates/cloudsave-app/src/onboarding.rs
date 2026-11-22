@@ -24,6 +24,7 @@ pub(crate) fn shell(
 ) -> adw::NavigationPage {
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
     // The application titlebar owns window controls; retain page title/back navigation.
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
@@ -34,7 +35,12 @@ pub(crate) fn shell(
 
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-    scrolled.set_child(Some(content));
+    let clamp = adw::Clamp::builder()
+        .maximum_size(620)
+        .tightening_threshold(500)
+        .child(content)
+        .build();
+    scrolled.set_child(Some(&clamp));
     scrolled.set_vexpand(true);
     toolbar.set_content(Some(&scrolled));
 
@@ -58,33 +64,23 @@ fn page_content() -> gtk::Box {
     content.set_margin_end(24);
     content.set_margin_top(16);
     content.set_margin_bottom(24);
-    content.set_halign(gtk::Align::Center);
-    content.set_width_request(640);
     content
 }
 
 fn welcome_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::NavigationPage {
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    content.set_vexpand(true);
-    content.set_valign(gtk::Align::Center);
-    content.set_halign(gtk::Align::Center);
-    content.set_width_request(440);
-    content.set_margin_top(48);
-    content.set_margin_bottom(48);
-
-    let title = gtk::Label::new(Some("Cloudsave"));
-    title.add_css_class("title-1");
-    title.set_halign(gtk::Align::Center);
-
-    let sub = gtk::Label::new(Some(
-        "Sichere deine Ordner automatisch – lokal oder in der Cloud, z. B. auf einer Hetzner Storage Box.",
-    ));
-    sub.add_css_class("dim-label");
-    sub.set_wrap(true);
-    sub.set_justify(gtk::Justification::Center);
+    let page = adw::StatusPage::builder()
+        .icon_name("folder-documents-symbolic")
+        .title("Ordner automatisch sichern")
+        .description(
+            "Wähle die Ordner aus, die du auf einem Laufwerk oder in der Cloud sichern möchtest.",
+        )
+        .build();
+    let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    actions.set_halign(gtk::Align::Center);
 
     let start = gtk::Button::with_label("Einrichtung starten");
     start.add_css_class("suggested-action");
+    start.add_css_class("primary-action");
     start.add_css_class("pill");
     start.set_halign(gtk::Align::Center);
     {
@@ -95,10 +91,9 @@ fn welcome_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
         });
     }
 
-    content.append(&title);
-    content.append(&sub);
-    content.append(&start);
+    actions.append(&start);
     let recover = gtk::Button::with_label("Vorhandene Sicherung wiederherstellen");
+    recover.add_css_class("flat");
     {
         let window = window.clone();
         let nav = nav.clone();
@@ -106,8 +101,9 @@ fn welcome_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
             nav.push(&target_page(&window, &nav, Vec::new()));
         });
     }
-    content.append(&recover);
-    shell("Willkommen", &content, None)
+    actions.append(&recover);
+    page.set_child(Some(&actions));
+    shell("Willkommen", &page, None)
 }
 
 fn add_folder_row(
@@ -174,6 +170,7 @@ fn folders_page(window: &gtk::Window, nav: &adw::NavigationView) -> adw::Navigat
     let checks: Rc<RefCell<Vec<(PathBuf, gtk::CheckButton)>>> = Rc::new(RefCell::new(Vec::new()));
     let next = gtk::Button::with_label("Weiter");
     next.add_css_class("suggested-action");
+    next.add_css_class("primary-action");
     next.add_css_class("pill");
 
     let group = adw::PreferencesGroup::builder()
@@ -267,6 +264,7 @@ fn target_picker(
     let choice: Rc<RefCell<Option<TargetChoice>>> = Rc::new(RefCell::new(None));
     let next = gtk::Button::with_label(button_label);
     next.add_css_class("suggested-action");
+    next.add_css_class("primary-action");
     next.add_css_class("pill");
     next.set_sensitive(false);
 
@@ -324,7 +322,7 @@ fn target_picker(
     test_btn.set_valign(gtk::Align::Center);
     test_row.add_suffix(&test_btn);
     let status_label = gtk::Label::new(Some(""));
-    status_label.add_css_class("dim-label");
+    status_label.add_css_class("supporting-text");
     status_label.set_xalign(0.0);
     status_label.set_wrap(true);
     status_label.set_visible(false);
@@ -670,8 +668,6 @@ fn done_page(
     let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
     content.set_vexpand(true);
     content.set_valign(gtk::Align::Center);
-    content.set_halign(gtk::Align::Center);
-    content.set_width_request(480);
     content.set_margin_top(48);
     content.set_margin_bottom(48);
 
@@ -684,7 +680,7 @@ fn done_page(
     title.set_halign(gtk::Align::Center);
 
     let summary_label = gtk::Label::new(Some(&summary));
-    summary_label.add_css_class("dim-label");
+    summary_label.add_css_class("supporting-text");
     summary_label.set_wrap(true);
     summary_label.set_xalign(0.0);
 
@@ -694,6 +690,7 @@ fn done_page(
         "Sync einrichten & starten"
     });
     start.add_css_class("suggested-action");
+    start.add_css_class("primary-action");
     start.add_css_class("pill");
     start.set_halign(gtk::Align::Center);
 
