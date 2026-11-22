@@ -15,19 +15,17 @@ use cloudsave_core::{
     WatchConfig, WatchEvent,
 };
 
-use crate::{icon, Icon};
-
 #[derive(Clone)]
 struct SyncUi {
     title: gtk::Label,
     sub: gtk::Label,
     progress: gtk::ProgressBar,
-    controls: gtk::Box,
+    controls: adw::WrapBox,
     pause: gtk::Button,
     control: Rc<RefCell<Option<TransferControl>>>,
     btn: gtk::Button,
     banner: gtk::Box,
-    symbol: gtk::DrawingArea,
+    symbol: gtk::Image,
     files: gtk::Label,
     size: gtk::Label,
     last_transfer: gtk::Label,
@@ -45,19 +43,20 @@ struct TargetStatus {
     error_text: gtk::Label,
 }
 
-fn separator() -> gtk::Separator {
-    let line = gtk::Separator::new(gtk::Orientation::Horizontal);
-    line.add_css_class("row-sep");
-    line
+fn symbolic_icon(name: &str, size: i32) -> gtk::Image {
+    let icon = gtk::Image::from_icon_name(name);
+    icon.set_pixel_size(size);
+    icon.set_valign(gtk::Align::Center);
+    icon
 }
 
-fn stat_row(symbol: Icon, caption: &str) -> (gtk::Box, gtk::Label) {
+fn stat_row(symbol: &str, caption: &str) -> (gtk::Box, gtk::Label) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    row.append(&icon(symbol, 18, 0.96, 0.74, 0.51));
+    row.append(&symbolic_icon(symbol, 16));
     let value = gtk::Label::new(Some("—"));
     value.add_css_class("heading");
     let name = gtk::Label::new(Some(caption));
-    name.add_css_class("stat-caption");
+    name.add_css_class("supporting-text");
     name.set_hexpand(true);
     name.set_xalign(0.0);
     name.set_wrap(true);
@@ -117,12 +116,13 @@ fn set_status(ui: &SyncUi, status: &str) {
         ui.banner.remove_css_class(class);
     }
     ui.banner.add_css_class(status);
-    let (glyph, color) = match status {
-        "success" => (Icon::Check, (0.64, 0.87, 0.54)),
-        "error" => (Icon::Warning, (1.0, 0.68, 0.60)),
-        _ => (Icon::Refresh, (1.0, 0.72, 0.43)),
+    let glyph = match status {
+        "success" => "object-select-symbolic",
+        "error" => "dialog-warning-symbolic",
+        "busy" => "emblem-synchronizing-symbolic",
+        _ => "folder-documents-symbolic",
     };
-    crate::set_icon(&ui.symbol, glyph, color.0, color.1, color.2);
+    ui.symbol.set_icon_name(Some(glyph));
     let busy = status == "busy";
     ui.sub.set_wrap(!busy);
     ui.sub.set_single_line_mode(busy);
@@ -150,15 +150,14 @@ fn endpoint_card(
     let card = gtk::Box::new(gtk::Orientation::Vertical, 0);
     card.add_css_class("card");
     card.add_css_class("panel");
-    card.add_css_class("endpoint-card");
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    header.set_margin_bottom(16);
+    header.set_margin_bottom(8);
     let heading = gtk::Label::new(Some(&if count == 1 {
         "Ziel".into()
     } else {
         format!("Ziel {}", index + 1)
     }));
-    heading.add_css_class("section-title");
+    heading.add_css_class("title-4");
     heading.set_xalign(0.0);
     heading.set_hexpand(true);
     header.append(&heading);
@@ -186,7 +185,7 @@ fn endpoint_card(
     }
     header.append(&remove);
     card.append(&header);
-    card.append(&separator());
+    card.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
 
     let (name, description) = match target {
         Target::Local { path } => ("Lokaler Ordner", path.to_string_lossy().to_string()),
@@ -203,36 +202,34 @@ fn endpoint_card(
             format!("{} · Benutzer {}", url, user),
         ),
     };
-    let details = gtk::Box::new(gtk::Orientation::Horizontal, 15);
+    let details = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     details.add_css_class("target-details");
-    details.append(&icon(
+    details.append(&symbolic_icon(
         if matches!(target, Target::Local { .. }) {
-            Icon::Storage
+            "drive-harddisk-symbolic"
         } else {
-            Icon::Server
+            "network-server-symbolic"
         },
-        36,
-        0.96,
-        0.74,
-        0.51,
+        24,
     ));
     let text = gtk::Box::new(gtk::Orientation::Vertical, 4);
     text.set_hexpand(true);
     let title = gtk::Label::new(Some(name));
-    title.add_css_class("target-title");
+    title.add_css_class("heading");
     title.set_xalign(0.0);
     title.set_wrap(true);
     text.append(&title);
     let subtitle = gtk::Label::new(Some(&description));
-    subtitle.add_css_class("target-sub");
+    subtitle.add_css_class("caption");
+    subtitle.add_css_class("supporting-text");
     subtitle.set_xalign(0.0);
     subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-    subtitle.set_width_chars(20);
+    subtitle.set_width_chars(10);
     subtitle.set_max_width_chars(30);
     subtitle.set_tooltip_text(Some(&description));
     text.append(&subtitle);
     let summary = gtk::Label::new(Some("Noch nicht geprüft"));
-    summary.add_css_class("target-result");
+    summary.add_css_class("caption");
     summary.set_wrap(true);
     summary.set_xalign(0.0);
     text.append(&summary);
@@ -241,10 +238,12 @@ fn endpoint_card(
     let (result_details, error_text) = error_details();
     card.append(&result_details);
 
+    let actions = adw::WrapBox::new();
+    actions.set_child_spacing(8);
+    actions.set_line_spacing(8);
+    card.append(&actions);
     let test = gtk::Button::with_label("Verbindung testen");
-    test.add_css_class("secondary-btn");
-    test.set_halign(gtk::Align::Start);
-    card.append(&test);
+    actions.append(&test);
     let status = gtk::Label::new(None);
     status.set_wrap(true);
     status.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -291,10 +290,8 @@ fn endpoint_card(
         });
     }
 
-    let restore = gtk::Button::with_label("Sicherungen wiederherstellen");
-    restore.add_css_class("add-btn");
-    restore.set_margin_top(12);
-    card.append(&restore);
+    let restore = crate::wrapping_button("Sicherungen wiederherstellen");
+    actions.append(&restore);
     {
         let window = window.clone();
         let nav = nav.clone();
@@ -317,8 +314,8 @@ fn endpoint_card(
 }
 
 fn remove_button(label: &str) -> gtk::Button {
-    let remove = gtk::Button::new();
-    remove.set_child(Some(&icon(Icon::Minus, 18, 1.0, 0.82, 0.75)));
+    let remove = gtk::Button::from_icon_name("list-remove-symbolic");
+    remove.add_css_class("flat");
     remove.add_css_class("folder-remove");
     remove.set_valign(gtk::Align::Center);
     remove.set_tooltip_text(Some(label));
@@ -406,11 +403,12 @@ pub fn build(
     page.set_spacing(16);
 
     let banner = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    banner.add_css_class("card");
     banner.add_css_class("status-banner");
     let summary = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     summary.set_hexpand(true);
     summary.set_valign(gtk::Align::Center);
-    let status_symbol = icon(Icon::Refresh, 34, 1.0, 0.72, 0.43);
+    let status_symbol = symbolic_icon("folder-documents-symbolic", 24);
     status_symbol.set_valign(gtk::Align::Start);
     status_symbol.add_css_class("status-symbol");
     summary.append(&status_symbol);
@@ -419,26 +417,26 @@ pub fn build(
     summary.append(&status_text);
     banner.append(&summary);
     let sync_btn = gtk::Button::with_label("Jetzt synchronisieren");
-    sync_btn.add_css_class("sync-btn");
-    sync_btn.set_valign(gtk::Align::Center);
-    let action = gtk::Box::new(gtk::Orientation::Horizontal, 9);
-    action.set_halign(gtk::Align::Center);
-    action.append(&gtk::Image::from_icon_name("view-refresh-symbolic"));
-    action.append(&gtk::Label::new(Some("Jetzt synchronisieren")));
-    sync_btn.set_child(Some(&action));
-    let actions = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    sync_btn.add_css_class("suggested-action");
+    sync_btn.add_css_class("primary-action");
+    let actions = adw::WrapBox::new();
+    actions.set_child_spacing(8);
+    actions.set_line_spacing(8);
+    actions.set_justify(adw::JustifyMode::Fill);
+    actions.set_justify_last_line(true);
     actions.set_valign(gtk::Align::Center);
     actions.append(&sync_btn);
     let add_folder = gtk::Button::with_label("Ordner hinzufügen");
-    add_folder.add_css_class("sync-btn");
+    add_folder.add_css_class("suggested-action");
+    add_folder.add_css_class("primary-action");
     add_folder.set_visible(false);
     actions.append(&add_folder);
     let add_target = gtk::Button::with_label("Endpunkt hinzufügen");
-    add_target.add_css_class("sync-btn");
+    add_target.add_css_class("suggested-action");
+    add_target.add_css_class("primary-action");
     add_target.set_visible(config.borrow().targets.is_empty());
     actions.append(&add_target);
     let restore = gtk::Button::with_label("Wiederherstellen");
-    restore.add_css_class("secondary-btn");
     restore.set_visible(!config.borrow().targets.is_empty());
     {
         let window = window.downgrade();
@@ -455,14 +453,14 @@ pub fn build(
     page.append(&banner);
 
     let status_title = gtk::Label::new(Some("Bereit"));
-    status_title.add_css_class("sync-title");
+    status_title.add_css_class("title-2");
     status_title.set_halign(gtk::Align::Start);
     status_title.set_xalign(0.0);
     status_title.set_wrap(true);
     status_text.append(&status_title);
 
     let status_sub = gtk::Label::new(Some("Noch kein Sync durchgeführt"));
-    status_sub.add_css_class("sync-sub");
+    status_sub.add_css_class("supporting-text");
     status_sub.set_xalign(0.0);
     status_sub.set_wrap(true);
     status_sub.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -471,13 +469,12 @@ pub fn build(
     let last_success = gtk::Label::new(None);
     last_success.set_xalign(0.0);
     last_success.set_wrap(true);
-    last_success.add_css_class("watch-status");
+    last_success.add_css_class("supporting-text");
     status_text.append(&last_success);
     let (errors, error_text) = error_details();
     status_text.append(&errors);
 
     let progress = gtk::ProgressBar::new();
-    progress.add_css_class("sync-progress");
     progress.set_fraction(0.0);
     progress.set_show_text(true);
     progress.set_text(Some("Abgleich läuft …"));
@@ -485,7 +482,9 @@ pub fn build(
     progress.set_visible(false);
     status_text.append(&progress);
 
-    let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let controls = adw::WrapBox::new();
+    controls.set_child_spacing(6);
+    controls.set_line_spacing(6);
     controls.set_visible(false);
     let pause = gtk::Button::with_label("Pausieren");
     pause.set_tooltip_text(Some("Nach der laufenden Datei pausieren"));
@@ -510,30 +509,35 @@ pub fn build(
     let auto_status = gtk::Label::new(None);
     auto_status.set_wrap(true);
     auto_status.set_xalign(0.0);
-    auto_status.add_css_class("watch-status");
+    auto_status.add_css_class("caption");
+    auto_status.add_css_class("supporting-text");
     let (watch_details, watch_error_text) = error_details();
 
-    let cols = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+    let cols = gtk::Box::new(gtk::Orientation::Horizontal, 16);
+    cols.set_homogeneous(true);
     cols.set_hexpand(true);
 
     page.append(&cols);
 
+    let left_column = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    left_column.set_valign(gtk::Align::Start);
+    cols.append(&left_column);
     let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
     left.add_css_class("card");
     left.add_css_class("panel");
-    left.set_valign(gtk::Align::Fill);
-    left.set_hexpand(true);
-    cols.append(&left);
+    left_column.append(&left);
 
     let section = gtk::Label::new(Some("Gesicherte Ordner"));
-    section.add_css_class("section-title");
+    section.add_css_class("title-4");
     section.set_halign(gtk::Align::Start);
-    section.set_margin_bottom(16);
+    section.set_height_request(34);
+    section.set_margin_bottom(6);
     left.append(&section);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let folder_notice = gtk::Label::new(None);
     folder_notice.set_wrap(true);
+    folder_notice.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     folder_notice.set_xalign(0.0);
     folder_notice.set_visible(false);
     let removal_requested = Rc::new(Cell::new(false));
@@ -559,14 +563,9 @@ pub fn build(
     left.append(&list);
     left.append(&folder_notice);
 
-    let add_btn = gtk::Button::new();
-    add_btn.add_css_class("add-btn");
+    let add_btn = gtk::Button::with_label("Ordner hinzufügen");
     add_btn.set_halign(gtk::Align::Start);
     add_btn.set_margin_top(14);
-    let add_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    add_box.append(&gtk::Image::from_icon_name("list-add-symbolic"));
-    add_box.append(&gtk::Label::new(Some("Ordner hinzufügen")));
-    add_btn.set_child(Some(&add_box));
     {
         let window = window.clone();
         let list = list.clone();
@@ -608,6 +607,7 @@ pub fn build(
     expander_btn.add_css_class("expander-btn");
     let exp_hbox = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let exp_label = gtk::Label::new(Some("Einstellungen"));
+    exp_label.add_css_class("heading");
     exp_label.set_halign(gtk::Align::Start);
     exp_label.set_hexpand(true);
     let arrow = gtk::Image::from_icon_name("pan-down-symbolic");
@@ -623,14 +623,14 @@ pub fn build(
     let settings_body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     settings_body.add_css_class("settings-body");
     let body_sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-    body_sep.add_css_class("row-sep");
     settings_body.append(&body_sep);
 
     let interval_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     interval_row.add_css_class("folder-row");
     let interval_label = gtk::Label::new(Some("Zusätzlicher Kontrollscan (Minuten)"));
-    interval_label.add_css_class("row-label");
     interval_label.set_halign(gtk::Align::Start);
+    interval_label.set_xalign(0.0);
+    interval_label.set_wrap(true);
     interval_label.set_hexpand(true);
     let interval_adj = gtk::Adjustment::new(
         config.borrow().settings.sync_interval_minutes as f64,
@@ -659,7 +659,7 @@ pub fn build(
     let live_hint = gtk::Label::new(Some("Live-Sync erkennt Dateiänderungen und überträgt sie nach etwa 3 Sekunden Ruhezeit. Der zusätzliche Kontrollscan fängt verpasste Ereignisse auf; er bestimmt nicht die Live-Sync-Geschwindigkeit."));
     live_hint.set_wrap(true);
     live_hint.set_xalign(0.0);
-    live_hint.add_css_class("dim-label");
+    live_hint.add_css_class("supporting-text");
     settings_body.append(&live_hint);
 
     settings_body.append(&crate::exclusion_picker::build(window, config.clone()));
@@ -668,7 +668,7 @@ pub fn build(
     mode_box.add_css_class("folder-row");
     let mode_label = gtk::Label::new(Some("Sicherungsmodus"));
     mode_label.set_xalign(0.0);
-    mode_label.add_css_class("row-label");
+    mode_label.add_css_class("heading");
     mode_box.append(&mode_label);
     let mode =
         gtk::DropDown::from_strings(&["Backup (keine Löschungen)", "Spiegelung (mit Löschungen)"]);
@@ -683,7 +683,7 @@ pub fn build(
     ));
     mode_hint.set_wrap(true);
     mode_hint.set_xalign(0.0);
-    mode_hint.add_css_class("dim-label");
+    mode_hint.add_css_class("supporting-text");
     mode_box.append(&mode_hint);
     {
         let config = config.clone();
@@ -738,12 +738,10 @@ pub fn build(
     }
 
     let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-    sep.add_css_class("row-sep");
     settings_body.append(&sep);
     let quit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     quit_row.add_css_class("folder-row");
     let quit_label = gtk::Label::new(Some("Beenden"));
-    quit_label.add_css_class("row-label");
     quit_label.set_halign(gtk::Align::Start);
     quit_label.set_hexpand(true);
     let quit_btn = gtk::Button::with_label("App beenden");
@@ -775,7 +773,7 @@ pub fn build(
     });
 
     let right = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    right.set_width_request(365);
+    right.set_valign(gtk::Align::Start);
     cols.append(&right);
     let targets = config.borrow().targets.clone();
     if targets.is_empty() {
@@ -783,7 +781,7 @@ pub fn build(
         empty.add_css_class("card");
         empty.add_css_class("panel");
         let title = gtk::Label::new(Some("Kein Endpunkt konfiguriert"));
-        title.add_css_class("target-title");
+        title.add_css_class("heading");
         title.set_xalign(0.0);
         title.set_wrap(true);
         empty.append(&title);
@@ -807,19 +805,13 @@ pub fn build(
         })
         .collect();
 
-    let add_target_btn = gtk::Button::new();
-    add_target_btn.add_css_class("add-btn");
+    let add_target_btn = crate::wrapping_button("Weiteren Endpunkt hinzufügen");
     add_target_btn.set_halign(gtk::Align::Start);
-    add_target_btn.set_margin_top(10);
     progress
         .bind_property("visible", &add_target_btn, "sensitive")
         .invert_boolean()
         .sync_create()
         .build();
-    let add_target_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    add_target_box.append(&icon(Icon::Cloud, 18, 1.0, 1.0, 1.0));
-    add_target_box.append(&gtk::Label::new(Some("Weiteren Endpunkt hinzufügen")));
-    add_target_btn.set_child(Some(&add_target_box));
     {
         let window = window.clone();
         let nav = nav.clone();
@@ -842,17 +834,19 @@ pub fn build(
     });
 
     let automatic = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    automatic.add_css_class("card");
     automatic.add_css_class("sync-controls");
     let auto_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let auto_text = gtk::Box::new(gtk::Orientation::Vertical, 3);
     auto_text.set_hexpand(true);
     let auto_label = gtk::Label::new(Some("Automatisch synchronisieren"));
-    auto_label.add_css_class("target-row-label");
+    auto_label.add_css_class("heading");
     auto_label.set_xalign(0.0);
     auto_label.set_wrap(true);
     auto_text.append(&auto_label);
     let scope = gtk::Label::new(Some("Für alle Endpunkte"));
-    scope.add_css_class("watch-status");
+    scope.add_css_class("caption");
+    scope.add_css_class("supporting-text");
     scope.set_xalign(0.0);
     auto_text.append(&scope);
     let auto_switch = gtk::Switch::new();
@@ -874,16 +868,16 @@ pub fn build(
     automatic.append(&auto_row);
     automatic.append(&auto_status);
     automatic.append(&watch_details);
-    right.append(&automatic);
+    left_column.append(&automatic);
 
     let stats = gtk::Expander::new(Some("Sicherungsdetails"));
     stats.add_css_class("card");
     stats.add_css_class("stats");
     let stats_rows = gtk::Box::new(gtk::Orientation::Vertical, 10);
     stats_rows.set_margin_top(12);
-    let (files_row, files_value) = stat_row(Icon::File, "Erfasste Dateikopien");
-    let (size_row, size_value) = stat_row(Icon::Storage, "Erfasste Sicherungsgröße");
-    let (time_row, time_value) = stat_row(Icon::Clock, "Letzte Übertragung");
+    let (files_row, files_value) = stat_row("text-x-generic-symbolic", "Erfasste Dateikopien");
+    let (size_row, size_value) = stat_row("drive-harddisk-symbolic", "Erfasste Sicherungsgröße");
+    let (time_row, time_value) = stat_row("document-open-recent-symbolic", "Letzte Übertragung");
     stats_rows.append(&files_row);
     stats_rows.append(&size_row);
     stats_rows.append(&time_row);
@@ -924,23 +918,21 @@ pub fn build(
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     let responsive = adw::BreakpointBin::new();
-    responsive.set_size_request(360, 360);
-    scrolled.set_child(Some(&page));
+    responsive.set_size_request(350, 360);
+    let clamp = adw::Clamp::builder()
+        .maximum_size(1120)
+        .tightening_threshold(960)
+        .child(&page)
+        .build();
+    scrolled.set_child(Some(&clamp));
     responsive.set_child(Some(&scrolled));
     let narrow = adw::Breakpoint::new(
-        adw::BreakpointCondition::parse("max-width: 860px").expect("valid layout breakpoint"),
+        adw::BreakpointCondition::parse("max-width: 800sp").expect("valid layout breakpoint"),
     );
-    narrow.add_setter(
-        &cols,
-        "orientation",
-        Some(&gtk::Orientation::Vertical.to_value()),
-    );
-    narrow.add_setter(&right, "width-request", Some(&(-1_i32).to_value()));
-    narrow.add_setter(
-        &banner,
-        "orientation",
-        Some(&gtk::Orientation::Vertical.to_value()),
-    );
+    let vertical = gtk::Orientation::Vertical.to_value();
+    narrow.add_setter(&cols, "orientation", Some(&vertical));
+    narrow.add_setter(&cols, "homogeneous", Some(&false.to_value()));
+    narrow.add_setter(&banner, "orientation", Some(&vertical));
     responsive.add_breakpoint(narrow);
     scrolled.set_vexpand(true);
 
@@ -1044,15 +1036,16 @@ pub fn build(
 
 fn switch_row(body: &gtk::Box, name: &str, active: bool, on_toggle: impl Fn(bool) + 'static) {
     let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-    sep.add_css_class("row-sep");
     body.append(&sep);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     row.add_css_class("folder-row");
     let label = gtk::Label::new(Some(name));
-    label.add_css_class("row-label");
     label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
     label.set_hexpand(true);
     let sw = gtk::Switch::new();
+    sw.update_property(&[gtk::accessible::Property::Label(name)]);
     sw.set_active(active);
     sw.connect_active_notify(move |s| on_toggle(s.is_active()));
     row.append(&label);
@@ -1154,7 +1147,6 @@ impl FolderList {
     fn append(&self, list: &gtk::Box, path: &Path) {
         if list.first_child().is_some() {
             let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-            sep.add_css_class("row-sep");
             list.append(&sep);
         }
         let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
@@ -1168,16 +1160,16 @@ impl FolderList {
                 .any(|folder| folder == path),
         );
         row.append(&check);
-        row.append(&icon(Icon::Folder, 30, 0.83, 0.80, 0.77));
+        row.append(&symbolic_icon("folder-symbolic", 20));
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string_lossy().to_string());
         let label = gtk::Label::new(Some(&name));
-        label.add_css_class("folder-name");
+        label.add_css_class("heading");
         label.set_xalign(0.0);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_width_chars(15);
+        label.set_width_chars(8);
         label.set_max_width_chars(40);
         label.set_tooltip_text(Some(&name));
         check.update_property(&[gtk::accessible::Property::Label(&format!("{name} sichern"))]);
@@ -1186,10 +1178,11 @@ impl FolderList {
         text.append(&label);
         let path_text = path.to_string_lossy();
         let location = gtk::Label::new(Some(&path_text));
-        location.add_css_class("folder-path");
+        location.add_css_class("caption");
+        location.add_css_class("supporting-text");
         location.set_xalign(0.0);
         location.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-        location.set_width_chars(15);
+        location.set_width_chars(8);
         location.set_max_width_chars(45);
         location.set_tooltip_text(Some(&path_text));
         text.append(&location);

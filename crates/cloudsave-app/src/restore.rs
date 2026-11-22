@@ -119,6 +119,7 @@ impl RestoreView {
         let mut groups = self.groups.borrow_mut();
         for (folder, files) in folders {
             let container = gtk::Box::new(gtk::Orientation::Vertical, 4);
+            container.add_css_class("card");
             container.add_css_class("restore-group");
             let title = if folder.as_os_str().is_empty() {
                 "Dateien im Sicherungsziel".into()
@@ -143,7 +144,7 @@ impl RestoreView {
                         |size| crate::jobs::format_bytes(size as f64),
                     );
                     let size = gtk::Label::new(Some(&size));
-                    size.add_css_class("dim-label");
+                    size.add_css_class("supporting-text");
                     let contents = gtk::Box::new(gtk::Orientation::Horizontal, 10);
                     contents.append(&filename);
                     contents.append(&size);
@@ -321,7 +322,7 @@ fn target_factory() -> gtk::SignalListItemFactory {
 }
 
 pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
-    let root = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 12);
     root.set_margin_top(16);
     root.set_margin_bottom(16);
     root.set_margin_start(20);
@@ -351,10 +352,12 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
 
     let search = gtk::SearchEntry::new();
     search.set_placeholder_text(Some("Dateiname oder Pfad suchen"));
+    search.update_property(&[gtk::accessible::Property::Label("Sicherungsdateien suchen")]);
     search.set_sensitive(false);
     root.append(&search);
 
     let status = gtk::Label::new(None);
+    status.add_css_class("supporting-text");
     status.set_xalign(0.0);
     status.set_wrap(true);
     root.append(&status);
@@ -386,19 +389,33 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
         .build();
     root.append(&feedback_scroll);
 
-    let choose = gtk::Button::with_label("Wiederherstellungsordner wählen …");
+    let footer = adw::WrapBox::new();
+    footer.set_child_spacing(12);
+    footer.set_line_spacing(8);
+    footer.set_justify(adw::JustifyMode::Fill);
+    footer.set_justify_last_line(true);
+    footer.add_css_class("card");
+    footer.add_css_class("restore-actions");
+    let output = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    output.set_hexpand(true);
+    let choose = crate::wrapping_button("Wiederherstellungsordner wählen …");
     choose.set_sensitive(false);
-    root.append(&choose);
+    output.append(&choose);
     let folder_label = path_label("");
+    folder_label.add_css_class("supporting-text");
     folder_label.set_visible(false);
-    root.append(&folder_label);
+    output.append(&folder_label);
+    footer.append(&output);
     let action = gtk::Button::with_label("Wiederherstellen");
     action.add_css_class("suggested-action");
+    action.add_css_class("primary-action");
+    action.set_valign(gtk::Align::Center);
     action.set_sensitive(false);
     action.set_tooltip_text(Some(
         "Vorhandene Dateien im Ausgabeordner bleiben erhalten.",
     ));
-    root.append(&action);
+    footer.append(&action);
+    root.append(&footer);
 
     let view = Rc::new(RestoreView {
         list,
@@ -482,10 +499,16 @@ pub fn page(window: &gtk::Window, targets: &[Target]) -> adw::NavigationPage {
 
     let toolbar = adw::ToolbarView::new();
     let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
     header.set_show_start_title_buttons(false);
     header.set_show_end_title_buttons(false);
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&root));
+    let clamp = adw::Clamp::builder()
+        .maximum_size(820)
+        .tightening_threshold(700)
+        .child(&root)
+        .build();
+    toolbar.set_content(Some(&clamp));
     if !targets.is_empty() {
         reload.emit_clicked();
     }
