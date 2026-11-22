@@ -90,6 +90,10 @@ impl State {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
+        // WAL keeps the per-file bookkeeping of a large sync cheap: commits append
+        // to the log instead of fsyncing per row, and readers never block writers.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        conn.busy_timeout(Duration::from_millis(500))?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
                 path TEXT PRIMARY KEY,
@@ -198,11 +202,10 @@ impl State {
     }
 
     pub(crate) fn source(&self, path: &str) -> Result<Option<std::path::PathBuf>> {
-        let result = self.conn.query_row(
-            "SELECT source FROM file_sources WHERE path = ?1",
-            params![path],
-            |row| row.get::<_, String>(0),
-        );
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source FROM file_sources WHERE path = ?1")?;
+        let result = stmt.query_row(params![path], |row| row.get::<_, String>(0));
         match result {
             Ok(source) => Ok(Some(source.into())),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),

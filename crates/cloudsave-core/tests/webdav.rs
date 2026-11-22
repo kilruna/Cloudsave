@@ -549,3 +549,56 @@ fn explicit_live_removal_deletes_the_webdav_collection_only() {
     );
     assert!(source.join("Unter/test.txt").exists());
 }
+
+#[test]
+fn webdav_sync_creates_each_directory_once_instead_of_mkcol_per_file() {
+    std::env::set_var("CLOUDSAVE_WEBDAV_PASSWORD", "pw");
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("quelle");
+    let srv = tmp.path().join("srv");
+    let state_path = tmp.path().join("state.db");
+    fs::create_dir_all(src.join("a/b/c")).unwrap();
+    fs::write(src.join("root.txt"), b"root").unwrap();
+    for i in 0..12 {
+        fs::write(src.join(format!("a/b/c/f{i}.txt")), format!("data {i}")).unwrap();
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let srv2 = srv.clone();
+    let mkcols = Arc::new(AtomicUsize::new(0));
+    let counter = mkcols.clone();
+    thread::spawn(move || {
+        for s in listener.incoming().flatten() {
+            let srv3 = srv2.clone();
+            let counter = counter.clone();
+            thread::spawn(move || {
+                handle_conn_mode(s, &srv3, move |method, _| {
+                    if method == "MKCOL" {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                    None
+                })
+            });
+        }
+    });
+
+    let cfg = Config {
+        folders: vec![src.clone()],
+        targets: vec![Target::Webdav {
+            url: format!("http://127.0.0.1:{port}/base"),
+            user: "u1".to_string(),
+        }],
+        settings: Settings {
+            sync_mode: SyncMode::Mirror,
+            ..Settings::default()
+        },
+    };
+
+    let r = sync(&cfg, &state_path).unwrap();
+    assert_eq!(r.uploaded, 13, "errors: {:?}", r.errors);
+    assert!(srv.join("base/quelle/a/b/c/f11.txt").exists());
+    // One MKCOL per directory plus the catalog folder, not one per file.
+    let count = mkcols.load(Ordering::SeqCst);
+    assert!(count <= 5, "unexpected MKCOL request count: {count}");
+}
