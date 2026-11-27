@@ -171,23 +171,25 @@ def steady_upload_layout():
     source = app.root/'source'
     nested = source.joinpath(*(['nested-' + 'a' * 90] * 5))
     nested.mkdir(parents=True)
-    (source/'short-name.fixture').write_bytes(b'short path')
-    (nested/'long-name.fixture').write_bytes(b'long path')
     with HTTPServer(('127.0.0.1', 0), Server) as server:
         server_thread = Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
         app.cfg.parent.mkdir(parents=True)
         app.cfg.write_text(f'folders = [{json.dumps(str(source))}]\n[[targets]]\n'
                            f'type = "webdav"\nurl = "http://127.0.0.1:{server.server_port}/dav"\n'
-                           'user = "qa"\n[settings]\nauto_sync = false\n')
+                           'user = "qa"\n[settings]\nauto_sync = false\nsync_mode = "backup"\n')
         try:
             with patch.dict(os.environ, CLOUDSAVE_WEBDAV_PASSWORD='fixture'):
                 app.launch()
-            app.click('Jetzt synchronisieren')
             heights = {}
-            for _ in range(2):
+            # Compare label heights without assuming which parallel upload the
+            # UI highlights. Each run introduces exactly one new file.
+            for path in (source/'short-name.fixture', nested/'long-name.fixture'):
+                path.write_bytes(b'layout fixture')
+                app.click('Jetzt synchronisieren')
                 name, proceed = uploads.get(timeout=8)
                 try:
+                    assert name == path.name, (name, path.name)
                     eventually(lambda: any(name in label for label in app.labels()))
                     time.sleep(.1)
                     nodes = app.tree()
@@ -197,7 +199,8 @@ def steady_upload_layout():
                     heights[name] = (subtitle['height'], banner['height'])
                 finally:
                     proceed.set()
-            eventually(lambda: 'Alles synchronisiert' in app.labels())
+                eventually(lambda: 'Alles synchronisiert' in app.labels())
+                path.unlink()
             assert heights['short-name.fixture'] == heights['long-name.fixture'], heights
         finally:
             app.stop()
