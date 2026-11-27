@@ -30,6 +30,12 @@
     <binary>cloudsave</binary>
   </provides>
   <releases>
+    <release version="0.1.1" date="2026-11-27">
+      <description>
+        <p>Faster backups with parallel transfers and less sync bookkeeping.</p>
+        <p xml:lang="de">Schnellere Sicherungen durch parallele Übertragungen und weniger Datenbankzugriffe.</p>
+      </description>
+    </release>
     <release version="0.1.0" date="2026-11-20"/>
   </releases>
 </component>
